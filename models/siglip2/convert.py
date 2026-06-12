@@ -181,6 +181,32 @@ def file_entry(path):
     return {"name": path.name, "sha256": sha256(path), "bytes": path.stat().st_size}
 
 
+def swift_manifest_literal(manifest):
+    """The exact `ModelDownloader.Manifest(...)` literal for SearchIndexConfig.swift,
+    so the pins are copy-pasted from the build, never hand-typed."""
+    def entry(e):
+        return (
+            f"                name: \"{e['name']}\",\n"
+            f"                sha256: \"{e['sha256']}\",\n"
+            f"                bytes: {e['bytes']:_}\n"
+        )
+    f = manifest["files"]
+    return (
+        "    static let manifest = ModelDownloader.Manifest(\n"
+        f"        model: \"{manifest['model']}\",\n"
+        f"        version: {manifest['version']},\n"
+        f"        embeddingDim: {manifest['embeddingDim']},\n"
+        f"        imageSize: {manifest['imageSize']},\n"
+        f"        contextLength: {manifest['contextLength']},\n"
+        "        files: .init(\n"
+        f"            imageEncoder: .init(\n{entry(f['imageEncoder'])}            ),\n"
+        f"            textEncoder: .init(\n{entry(f['textEncoder'])}            ),\n"
+        f"            tokenizer: .init(\n{entry(f['tokenizer'])}            )\n"
+        "        )\n"
+        "    )\n"
+    )
+
+
 def zip_package(pkg_path):
     zip_path = pkg_path.with_suffix(".mlpackage.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -254,7 +280,11 @@ def main():
         },
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    swift_path = out_dir / "manifest.swift"
+    swift_path.write_text(swift_manifest_literal(manifest))
     print(f"OK. Artifacts in {out_dir}/")
+    print(f"Pins for SearchIndexConfig.swift in {swift_path} — paste over the existing `static let manifest`.")
 
 
 if __name__ == "__main__":
