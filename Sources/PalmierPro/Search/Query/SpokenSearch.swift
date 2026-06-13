@@ -1,8 +1,6 @@
 import Foundation
 
-/// Spoken search: exact keyword matches rank first, semantic segment matches fill below.
-/// Semantic matching runs per model family — the query is embedded once per family
-/// present in the library and ranked only against that family's indexes.
+/// Spoken search: exact keyword matches rank first, semantic segment matches fill below
 enum SpokenSearch {
     struct Hit: Equatable {
         let assetID: String
@@ -14,7 +12,7 @@ enum SpokenSearch {
     static func search(
         query: String, assets: [(id: String, url: URL)], limit: Int = 20
     ) async -> [Hit] {
-        let keyword = KeywordSearch.search(query: query, assets: assets, limit: limit)
+        let keyword = Keyword.search(query: query, assets: assets, limit: limit)
         guard keyword.count < limit, SpokenModel.anyAvailable else { return keyword }
 
         var byFamily: [SpokenModel: [(String, EmbeddingStore.AssetIndex)]] = [:]
@@ -68,5 +66,34 @@ enum SpokenSearch {
             .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    /// Exact-keyword tier: cached transcripts, all query words present in any order.
+    enum Keyword {
+        /// Query split into words, edge punctuation stripped (so "budget," → "budget").
+        static func terms(in query: String) -> [String] {
+            query.split(whereSeparator: \.isWhitespace)
+                .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+                .filter { !$0.isEmpty }
+        }
+
+        static func matches(_ text: String, terms: [String]) -> Bool {
+            terms.allSatisfy { text.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        }
+
+        static func search(query: String, assets: [(id: String, url: URL)], limit: Int = 20) -> [Hit] {
+            let terms = terms(in: query)
+            guard !terms.isEmpty else { return [] }
+
+            var hits: [Hit] = []
+            for asset in assets {
+                guard let transcript = TranscriptCache.cachedOnDisk(for: asset.url) else { continue }
+                for segment in transcript.segments where matches(segment.text, terms: terms) {
+                    hits.append(Hit(assetID: asset.id, start: segment.start, end: segment.end, text: segment.text))
+                    if hits.count >= limit { return hits }
+                }
+            }
+            return hits
+        }
     }
 }

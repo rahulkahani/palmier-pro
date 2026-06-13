@@ -2,6 +2,28 @@ import Foundation
 import Testing
 @testable import PalmierPro
 
+@Suite("SpokenSearch.Keyword")
+struct KeywordTierTests {
+    @Test func parsesTermsStrippingEdgePunctuation() {
+        #expect(SpokenSearch.Keyword.terms(in: "  budget, meeting!  ") == ["budget", "meeting"])
+        #expect(SpokenSearch.Keyword.terms(in: "don't stop") == ["don't", "stop"])
+        #expect(SpokenSearch.Keyword.terms(in: "...") == [])
+        #expect(SpokenSearch.Keyword.terms(in: "") == [])
+    }
+
+    @Test func matchesAllTermsAnyOrder() {
+        let text = "We reviewed the Q3 budget at the morning meeting."
+        #expect(SpokenSearch.Keyword.matches(text, terms: ["budget", "meeting"]))
+        #expect(SpokenSearch.Keyword.matches(text, terms: ["meeting", "budget"]))
+        #expect(!SpokenSearch.Keyword.matches(text, terms: ["budget", "harbor"]))
+    }
+
+    @Test func caseAndDiacriticInsensitiveAndPartialWord() {
+        #expect(SpokenSearch.Keyword.matches("Visit the CAFÉ downtown", terms: ["cafe"]))
+        #expect(SpokenSearch.Keyword.matches("she was running fast", terms: ["run"]))
+    }
+}
+
 @Suite("SpokenSearch merge")
 struct SpokenSearchMergeTests {
     private func transcript(segments: [(String, Double, Double)]) -> TranscriptionResult {
