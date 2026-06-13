@@ -27,6 +27,7 @@ struct MediaTab: View {
     @State var isDropTargeted = false
     @State var visualHits: [VisualSearch.Hit] = []
     @State var spokenHits: [SpokenSearch.Hit] = []
+    @State var collapsedSearchSections: Set<String> = []
     @State var momentSearchTask: Task<Void, Never>?
     @State var assetFrames: [String: CGRect] = [:]
     @State var marqueeSelection = MarqueeSelection()

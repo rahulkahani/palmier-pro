@@ -11,15 +11,19 @@ extension MediaTab {
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if !visualHits.isEmpty {
-                    momentHeader("Moments", icon: "sparkle.magnifyingglass", count: visualHits.count)
-                    resultsGrid { ForEach(visualHits.indices, id: \.self) { momentCard(visualHits[$0]) } }
+                    momentHeader("Moments", icon: "sparkle.magnifyingglass", count: visualHits.count, collapsible: true)
+                    if !collapsedSearchSections.contains("Moments") {
+                        resultsGrid { ForEach(visualHits.indices, id: \.self) { momentCard(visualHits[$0]) } }
+                    }
                 }
                 if !spokenHits.isEmpty {
-                    momentHeader("Spoken", icon: "waveform", count: spokenHits.count)
-                    VStack(spacing: AppTheme.Spacing.sm) {
-                        ForEach(spokenHits.indices, id: \.self) { spokenRow(spokenHits[$0]) }
+                    momentHeader("Spoken", icon: "waveform", count: spokenHits.count, collapsible: true)
+                    if !collapsedSearchSections.contains("Spoken") {
+                        VStack(spacing: AppTheme.Spacing.sm) {
+                            ForEach(spokenHits.indices, id: \.self) { spokenRow(spokenHits[$0]) }
+                        }
+                        .padding(.bottom, AppTheme.Spacing.sm)
                     }
-                    .padding(.bottom, AppTheme.Spacing.sm)
                 }
                 if !nameMatches.isEmpty {
                     momentHeader("Files", icon: "doc", count: nameMatches.count)
@@ -49,20 +53,37 @@ extension MediaTab {
         .padding(.bottom, AppTheme.Spacing.md)
     }
 
-    private func momentHeader(_ title: String, icon: String, count: Int) -> some View {
-        HStack(spacing: AppTheme.Spacing.xs) {
-            Image(systemName: icon)
-                .font(.system(size: AppTheme.FontSize.xs))
-            Text(title)
-                .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
-            Text("\(count)")
-                .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-            Spacer()
+    private func momentHeader(_ title: String, icon: String, count: Int, collapsible: Bool = false) -> some View {
+        let isCollapsed = collapsedSearchSections.contains(title)
+        return Button {
+            guard collapsible else { return }
+            withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
+                if isCollapsed { collapsedSearchSections.remove(title) }
+                else { collapsedSearchSections.insert(title) }
+            }
+        } label: {
+            HStack(spacing: AppTheme.Spacing.xs) {
+                if collapsible {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                        .rotationEffect(.degrees(isCollapsed ? -90 : 0))
+                }
+                Image(systemName: icon)
+                    .font(.system(size: AppTheme.FontSize.xs))
+                Text(title)
+                    .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                Text("\(count)")
+                    .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                Spacer()
+            }
+            .foregroundStyle(AppTheme.Text.secondaryColor)
+            .padding(.horizontal, AppTheme.Spacing.mdLg)
+            .padding(.vertical, AppTheme.Spacing.sm)
+            .contentShape(Rectangle())
         }
-        .foregroundStyle(AppTheme.Text.secondaryColor)
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
-        .padding(.vertical, AppTheme.Spacing.sm)
+        .buttonStyle(.plain)
+        .disabled(!collapsible)
     }
 
     // MARK: - Rows
