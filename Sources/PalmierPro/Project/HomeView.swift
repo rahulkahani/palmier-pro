@@ -23,6 +23,12 @@ struct HomeView: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            SampleProjectsStrip()
+            Text("My Projects")
+                .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .padding(.horizontal, AppTheme.Spacing.xlXxl)
+                .padding(.bottom, AppTheme.Spacing.sm)
             projectGrid
         }
     }
