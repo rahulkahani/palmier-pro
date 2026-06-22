@@ -76,6 +76,17 @@ enum AppTheme {
         static let tintGradient = [Color(red: 0.42, green: 0.78, blue: 0.45), Color(red: 0.82, green: 0.38, blue: 0.72)]
     }
 
+    enum Curve {
+        static let editorHeight: CGFloat = 180
+        static let pointDiameter: CGFloat = 9
+        /// Invisible grab target around each point — much larger than the dot so it's easy to hit.
+        static let pointHitDiameter: CGFloat = 30
+        static let lumaColor = Color(red: 1, green: 1, blue: 1)
+        static let redColor = Color(red: 1, green: 0.22, blue: 0.18)
+        static let greenColor = Color(red: 0.32, green: 0.82, blue: 0.36)
+        static let blueColor = Color(red: 0.32, green: 0.56, blue: 1)
+    }
+
     /// Monochrome silver shimmer
     static let aiGradient = LinearGradient(
         stops: [

@@ -21,6 +21,27 @@ struct EffectModelTests {
         #expect(decoded.effects?.first?.enabled == true)
     }
 
+    /// The master curve is a true luma curve: lifting it raises luminance while keeping
+    /// the R:G:B ratio (chroma) of a non-clipping voxel constant.
+    @Test func masterCurveIsLumaPreservingChroma() throws {
+        let curve = GradeCurve(master: [CurvePoint(x: 0, y: 0.2), CurvePoint(x: 1, y: 1)])
+        let n = 17
+        let cube = try #require(curve.cubeData(dimension: n))
+        let f = cube.data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+
+        // A mid, saturated voxel that won't clip after the lift.
+        let (ri, gi, bi) = (10, 6, 2)
+        let idx = ((bi * n + gi) * n + ri) * 4
+        let (outR, outG, outB) = (Double(f[idx]), Double(f[idx + 1]), Double(f[idx + 2]))
+        let (inR, inG, inB) = (Double(ri) / 16, Double(gi) / 16, Double(bi) / 16)
+
+        #expect(abs(outR / outG - inR / inG) < 0.02, "R:G ratio should hold (chroma preserved)")
+        #expect(abs(outR / outB - inR / inB) < 0.02, "R:B ratio should hold (chroma preserved)")
+        let inLuma = 0.2126 * inR + 0.7152 * inG + 0.0722 * inB
+        let outLuma = 0.2126 * outR + 0.7152 * outG + 0.0722 * outB
+        #expect(outLuma > inLuma + 0.05, "lifted luma curve should raise luminance")
+    }
+
     @Test func clipWithoutEffectsOmitsKey() throws {
         let clip = Fixtures.clip(id: "c1", mediaRef: "m", start: 0, duration: 30)
         let data = try JSONEncoder().encode(clip)
@@ -142,8 +163,9 @@ struct EffectRenderingTests {
         // Vibrance's delta is the least predictable across renderers, so render it
         // (catches a bad filter key) but don't assert a pixel change.
         let noOpOnSaturated: Set<String> = ["color.vibrance"]
+        // color.curves carries a JSON curve, not Double params — covered by its own test.
         let base = try await frame(nil)
-        for descriptor in EffectRegistry.all where descriptor.resourceKey == nil {
+        for descriptor in EffectRegistry.all where descriptor.resourceKey == nil && descriptor.id != "color.curves" {
             let params = nonDefault[descriptor.id]
             #expect(params != nil, "add non-default params for \(descriptor.id) to this test")
             let rendered = try await frame([Effect.make(descriptor.id, params ?? [:])])
@@ -151,6 +173,44 @@ struct EffectRenderingTests {
             let changed = zip(base, rendered).contains { abs(Int($0) - Int($1)) > 8 }
             #expect(changed, "\(descriptor.id) produced an unchanged frame")
         }
+    }
+
+    /// A master tone curve that lifts shadows/mids measurably brightens the frame,
+    /// and an identity curve is a passthrough.
+    @Test func curvesEffectAppliesCompiledCube() async throws {
+        let renderSize = CompositorFixtures.renderSize
+        let videoURL = try await CompositorFixtures.midtoneVideoURL()
+        nonisolated(unsafe) let urls = ["midtone": videoURL]
+
+        func meanLuma(_ curve: GradeCurve?) async throws -> Double {
+            var clip = CompositorFixtures.midtoneClip()
+            if let curve, let json = curve.encoded() {
+                var effect = Effect(type: "color.curves")
+                effect.params["curve"] = EffectParam(string: json)
+                clip.effects = [effect]
+            }
+            let tl = CompositorFixtures.timeline([Fixtures.videoTrack(clips: [clip])])
+            let result = try await CompositionBuilder.build(
+                timeline: tl, resolveURL: { urls[$0] }, renderSize: renderSize
+            )
+            let generator = AVAssetImageGenerator(asset: result.composition)
+            generator.videoComposition = result.videoComposition
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            let cg = try await generator.image(at: CMTime(value: 15, timescale: 30)).image
+            let bytes = ColorProbeHelpers.srgbBytes(cg, size: renderSize)
+            var total = 0.0
+            for i in stride(from: 0, to: bytes.count, by: 4) {
+                total += Double(bytes[i]) + Double(bytes[i + 1]) + Double(bytes[i + 2])
+            }
+            return total / Double(bytes.count / 4 * 3)
+        }
+
+        let base = try await meanLuma(nil)
+        let identity = try await meanLuma(GradeCurve())
+        let lift = try await meanLuma(GradeCurve(master: [CurvePoint(x: 0, y: 0.35), CurvePoint(x: 1, y: 1)]))
+        #expect(abs(identity - base) < 4, "identity curve should passthrough: base \(base), got \(identity)")
+        #expect(lift > base + 15, "lifted master curve should brighten: base \(base), got \(lift)")
     }
 
     /// LUT effect: a generated invert .cube file flips the pattern's colors.

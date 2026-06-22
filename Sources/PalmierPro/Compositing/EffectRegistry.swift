@@ -76,7 +76,7 @@ struct EffectDescriptor: Identifiable, Sendable {
 
 enum EffectRegistry {
 
-    static let all: [EffectDescriptor] = color + lut + blur + stylize
+    static let all: [EffectDescriptor] = color + lut + curves + blur + stylize
 
     private static let color: [EffectDescriptor] = [
         EffectDescriptor(
@@ -199,6 +199,21 @@ enum EffectRegistry {
                     kCIInputImageKey: image,
                     kCIInputTargetImageKey: graded,
                     kCIInputTimeKey: intensity,
+                ])
+            }
+        ),
+    ]
+
+    private static let curves: [EffectDescriptor] = [
+        EffectDescriptor(
+            id: "color.curves", displayName: "Curves", category: "Color",
+            params: [],
+            apply: { image, p, _ in
+                guard let json = p.string("curve"),
+                      let cube = CurveLUTCache.cube(forJSON: json) else { return image }
+                return image.applyingFilter("CIColorCube", parameters: [
+                    "inputCubeDimension": cube.dimension,
+                    "inputCubeData": cube.data,
                 ])
             }
         ),

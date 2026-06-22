@@ -504,7 +504,7 @@ struct InspectorView: View {
     /// Canonical order the fixed adjustment sections insert their effects in.
     private var alwaysOnEffectOrder: [String] {
         ["color.exposure", "color.contrast", "color.highlightsShadows", "color.blacksWhites",
-         "color.temperature", "color.vibrance", "color.saturation",
+         "color.temperature", "color.vibrance", "color.saturation", "color.curves",
          "blur.gaussian", "blur.sharpen", "stylize.vignette"]
     }
 
@@ -520,7 +520,7 @@ struct InspectorView: View {
                 adjustmentSection(title: "Tone", controls: toneControls, clips: clips)
                 adjustmentSection(title: "Color", controls: colorBalanceControls, clips: clips)
             case .curves:
-                comingSoonSection("Curves")
+                curvesSection(clips: clips)
             case .wheels:
                 comingSoonSection("Color wheels & HSL")
             case .effects:
@@ -540,6 +540,87 @@ struct InspectorView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, AppTheme.Spacing.xl)
+    }
+
+    // MARK: Curves
+
+    @ViewBuilder
+    private func curvesSection(clips: [Clip]) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            HStack(spacing: AppTheme.Spacing.xs) {
+                sectionTitleLabel(title: "Curves")
+                Spacer()
+                if anyAdjusted(["color.curves"], clips: clips) {
+                    resetButton(
+                        onReset: { setCurve(GradeCurve(), clips: clips, commit: true, action: "Reset Curves") },
+                        help: "Reset curves"
+                    )
+                }
+            }
+            CurveEditorView(
+                curve: curve(in: clips.first?.effects ?? []),
+                onChange: { setCurveChannel($0, points: $1, clips: clips, commit: false, action: "Edit Curves") },
+                onCommit: { setCurveChannel($0, points: $1, clips: clips, commit: true, action: "Edit Curves") }
+            )
+            .padding(.leading, sectionContentIndent)
+        }
+    }
+
+    private func curve(in effects: [Effect]) -> GradeCurve {
+        guard let json = effects.first(where: { $0.type == "color.curves" })?
+            .params["curve"]?.string else { return GradeCurve() }
+        return GradeCurve(json: json) ?? GradeCurve()
+    }
+
+    private func setCurveChannel(
+        _ channel: CurveEditorView.Channel,
+        points: [CurvePoint],
+        clips: [Clip],
+        commit: Bool,
+        action: String
+    ) {
+        let mutate: (inout [Effect]) -> Void = { [self] effects in
+            var curve = curve(in: effects)
+            switch channel {
+            case .master: curve.master = points
+            case .red: curve.red = points
+            case .green: curve.green = points
+            case .blue: curve.blue = points
+            }
+            upsertCurve(curve, in: &effects)
+        }
+        if commit {
+            commitEffects(clips, actionName: action, mutate)
+        } else {
+            applyEffects(clips, mutate)
+        }
+    }
+
+    /// Upsert the curves effect in place (stable id), pruning it when the curve is identity.
+    private func setCurve(_ curve: GradeCurve, clips: [Clip], commit: Bool, action: String) {
+        let mutate: (inout [Effect]) -> Void = { [self] effects in
+            upsertCurve(curve, in: &effects)
+        }
+        if commit {
+            commitEffects(clips, actionName: action, mutate)
+        } else {
+            applyEffects(clips, mutate)
+        }
+    }
+
+    private func upsertCurve(_ curve: GradeCurve, in effects: inout [Effect]) {
+        let existing = effects.firstIndex { $0.type == "color.curves" }
+        guard !curve.isIdentity, let json = curve.encoded() else {
+            if let existing { effects.remove(at: existing) }
+            return
+        }
+        if let existing {
+            effects[existing].params["curve"] = EffectParam(string: json)
+        } else {
+            var effect = Effect(type: "color.curves")
+            effect.params["curve"] = EffectParam(string: json)
+            effects.insert(effect, at: alwaysOnInsertIndex(effects, for: "color.curves"))
+        }
     }
 
     // MARK: Always-on adjustment sections (Color, Effects)
@@ -677,12 +758,10 @@ struct InspectorView: View {
 
     /// Live edit (no undo entry) — mirrors applyClipProperty's refresh-only path.
     private func applyEffects(_ clips: [Clip], _ mutate: @escaping (inout [Effect]) -> Void) {
-        for clip in clips {
-            editor.applyClipProperty(clipId: clip.id) { c in
-                var effects = c.effects ?? []
-                mutate(&effects)
-                c.effects = effects.isEmpty ? nil : effects
-            }
+        editor.applyClipProperties(clipIds: clips.map(\.id)) { c in
+            var effects = c.effects ?? []
+            mutate(&effects)
+            c.effects = effects.isEmpty ? nil : effects
         }
     }
 
@@ -691,12 +770,10 @@ struct InspectorView: View {
         _ clips: [Clip], actionName: String, _ mutate: @escaping (inout [Effect]) -> Void
     ) {
         editor.undoManager?.beginUndoGrouping()
-        for clip in clips {
-            editor.commitClipProperty(clipId: clip.id) { c in
-                var effects = c.effects ?? []
-                mutate(&effects)
-                c.effects = effects.isEmpty ? nil : effects
-            }
+        editor.commitClipProperties(clipIds: clips.map(\.id)) { c in
+            var effects = c.effects ?? []
+            mutate(&effects)
+            c.effects = effects.isEmpty ? nil : effects
         }
         editor.undoManager?.endUndoGrouping()
         editor.undoManager?.setActionName(actionName)
