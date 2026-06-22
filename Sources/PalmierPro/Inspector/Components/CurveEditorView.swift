@@ -111,7 +111,7 @@ struct CurveEditorView: View {
                 .foregroundStyle(AppTheme.Text.mutedColor)
         }
         .onAppear { refreshHistogram() }
-        .onChange(of: curve) { _, _ in refreshHistogram() }
+        .onChange(of: editor.timelineRenderRevision) { _, _ in refreshHistogram() }
         .onChange(of: editor.activeFrame) { _, _ in refreshHistogram() }
         .onChange(of: editor.isPlaying) { _, playing in if !playing { refreshHistogram() } }
     }

@@ -14,8 +14,7 @@ struct InspectorView: View {
 
     enum AdjustTab: String, CaseIterable, Hashable {
         case basic = "Basic"
-        case curves = "Curves"
-        case wheels = "Wheels"
+        case color = "Color"
         case effects = "Effects"
     }
 
@@ -482,11 +481,17 @@ struct InspectorView: View {
         ]
     }
 
-    /// Basic › Color (white balance + presence).
-    private var colorBalanceControls: [EffectControl] {
+    /// Basic › White Balance.
+    private var whiteBalanceControls: [EffectControl] {
         [
             EffectControl(effectId: "color.temperature", paramKey: "temperature", gradient: AppTheme.Slider.tempGradient),
             EffectControl(effectId: "color.temperature", paramKey: "tint", gradient: AppTheme.Slider.tintGradient),
+        ]
+    }
+
+    /// Basic › Presence.
+    private var presenceControls: [EffectControl] {
+        [
             EffectControl(effectId: "color.vibrance", paramKey: "amount"),
             EffectControl(effectId: "color.saturation", paramKey: "amount"),
         ]
@@ -504,7 +509,7 @@ struct InspectorView: View {
     /// Canonical order the fixed adjustment sections insert their effects in.
     private var alwaysOnEffectOrder: [String] {
         ["color.exposure", "color.contrast", "color.highlightsShadows", "color.blacksWhites",
-         "color.temperature", "color.vibrance", "color.saturation", "color.curves",
+         "color.temperature", "color.vibrance", "color.saturation", "color.wheels", "color.curves",
          "blur.gaussian", "blur.sharpen", "stylize.vignette"]
     }
 
@@ -518,28 +523,15 @@ struct InspectorView: View {
             switch adjustSubTab {
             case .basic:
                 adjustmentSection(title: "Tone", controls: toneControls, clips: clips)
-                adjustmentSection(title: "Color", controls: colorBalanceControls, clips: clips)
-            case .curves:
+                adjustmentSection(title: "White Balance", controls: whiteBalanceControls, clips: clips)
+                adjustmentSection(title: "Presence", controls: presenceControls, clips: clips)
+            case .color:
                 curvesSection(clips: clips)
-            case .wheels:
-                comingSoonSection("Color wheels & HSL")
+                wheelsSection(clips: clips)
             case .effects:
                 adjustmentSection(title: "Effects", controls: stylizeControls, clips: clips)
             }
         }
-    }
-
-    private func comingSoonSection(_ name: String) -> some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            Text(name)
-                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-            Text("Coming soon.")
-                .font(.system(size: AppTheme.FontSize.xs))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, AppTheme.Spacing.xl)
     }
 
     // MARK: Curves
@@ -620,6 +612,73 @@ struct InspectorView: View {
             var effect = Effect(type: "color.curves")
             effect.params["curve"] = EffectParam(string: json)
             effects.insert(effect, at: alwaysOnInsertIndex(effects, for: "color.curves"))
+        }
+    }
+
+    // MARK: Color wheels
+
+    @ViewBuilder
+    private func wheelsSection(clips: [Clip]) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            HStack(spacing: AppTheme.Spacing.xs) {
+                sectionTitleLabel(title: "Color Wheels")
+                Spacer()
+                if anyAdjusted(["color.wheels"], clips: clips) {
+                    HoldToPreviewButton(
+                        onPress: { previewSection(["color.wheels"], clips: clips, enabled: false) },
+                        onRelease: { previewSection(["color.wheels"], clips: clips, enabled: true) }
+                    )
+                    resetButton(
+                        onReset: { resetEffects(["color.wheels"], clips: clips, actionName: "Reset Color Wheels") },
+                        help: "Reset color wheels"
+                    )
+                }
+            }
+            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+                wheelControl("Lift", prefix: "lift", clips: clips)
+                wheelControl("Gamma", prefix: "gamma", clips: clips)
+                wheelControl("Gain", prefix: "gain", clips: clips)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.leading, sectionContentIndent)
+        }
+    }
+
+    private func wheelControl(_ title: String, prefix: String, clips: [Clip]) -> some View {
+        let mKey = "\(prefix)_m"
+        let mSpec = EffectRegistry.descriptor(id: "color.wheels")?.params.first { $0.key == mKey }
+        let mDefault = mSpec?.defaultValue ?? 0
+        let mRange = mSpec?.range ?? 0...2
+        return ColorWheelControl(
+            title: title,
+            x: sharedClipValue(clips) { wheelParam($0, "\(prefix)_x", default: 0) } ?? 0,
+            y: sharedClipValue(clips) { wheelParam($0, "\(prefix)_y", default: 0) } ?? 0,
+            master: sharedClipValue(clips) { wheelParam($0, mKey, default: mDefault) } ?? mDefault,
+            masterRange: mRange,
+            masterDefault: mDefault,
+            onColorChanged: { setWheelColor(prefix, $0, $1, clips: clips, commit: false) },
+            onColorCommit: { setWheelColor(prefix, $0, $1, clips: clips, commit: true) },
+            onMasterChanged: { setControlParam(EffectControl(effectId: "color.wheels", paramKey: mKey), label: title, value: $0, clips: clips, commit: false) },
+            onMasterCommit: { setControlParam(EffectControl(effectId: "color.wheels", paramKey: mKey), label: title, value: $0, clips: clips, commit: true) }
+        )
+    }
+
+    private func wheelParam(_ clip: Clip, _ key: String, default def: Double) -> Double {
+        (clip.effects ?? []).first { $0.type == "color.wheels" }?.params[key]?.resolved(at: 0, default: def) ?? def
+    }
+
+    /// Both pad axes upserted in one mutation so a drag is a single undo entry.
+    private func setWheelColor(_ prefix: String, _ x: Double, _ y: Double, clips: [Clip], commit: Bool) {
+        let xc = EffectControl(effectId: "color.wheels", paramKey: "\(prefix)_x")
+        let yc = EffectControl(effectId: "color.wheels", paramKey: "\(prefix)_y")
+        let mutate: (inout [Effect]) -> Void = { [self] effects in
+            upsertControl(&effects, control: xc, value: x)
+            upsertControl(&effects, control: yc, value: y)
+        }
+        if commit {
+            commitEffects(clips, actionName: "Adjust \(prefix.capitalized)", mutate)
+        } else {
+            applyEffects(clips, mutate)
         }
     }
 

@@ -42,6 +42,42 @@ struct EffectModelTests {
         #expect(outLuma > inLuma + 0.05, "lifted luma curve should raise luminance")
     }
 
+    @Test func curveCubePacksRGBAWithRedFastest() throws {
+        let curve = GradeCurve(
+            red: [CurvePoint(x: 0, y: 0), CurvePoint(x: 1, y: 0.25)],
+            green: [CurvePoint(x: 0, y: 0), CurvePoint(x: 1, y: 0.5)],
+            blue: [CurvePoint(x: 0, y: 0), CurvePoint(x: 1, y: 0.75)]
+        )
+        let n = 17
+        let cube = try #require(curve.cubeData(dimension: n))
+        let f = cube.data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+        let (ri, gi, bi) = (3, 5, 7)
+        let idx = ((bi * n + gi) * n + ri) * 4
+
+        #expect(abs(Double(f[idx]) - Double(ri) / Double(n - 1) * 0.25) < 0.0001)
+        #expect(abs(Double(f[idx + 1]) - Double(gi) / Double(n - 1) * 0.5) < 0.0001)
+        #expect(abs(Double(f[idx + 2]) - Double(bi) / Double(n - 1) * 0.75) < 0.0001)
+        #expect(f[idx + 3] == 1)
+    }
+
+    @Test func colorWheelCubePacksRGBAWithRedFastest() throws {
+        let values = [
+            "lift_x": 0.0, "lift_y": 0.0, "lift_m": 0.0,
+            "gamma_x": 0.0, "gamma_y": 0.0, "gamma_m": 1.0,
+            "gain_x": 0.0, "gain_y": 0.0, "gain_m": 0.5,
+        ]
+        let cube = try #require(ColorWheels.cube(for: ResolvedEffectParams(values: values, strings: [:])))
+        let f = cube.data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+        let n = cube.dimension
+        let (ri, gi, bi) = (3, 5, 7)
+        let idx = ((bi * n + gi) * n + ri) * 4
+
+        #expect(abs(Double(f[idx]) - Double(ri) / Double(n - 1) * 0.5) < 0.0001)
+        #expect(abs(Double(f[idx + 1]) - Double(gi) / Double(n - 1) * 0.5) < 0.0001)
+        #expect(abs(Double(f[idx + 2]) - Double(bi) / Double(n - 1) * 0.5) < 0.0001)
+        #expect(f[idx + 3] == 1)
+    }
+
     @Test func clipWithoutEffectsOmitsKey() throws {
         let clip = Fixtures.clip(id: "c1", mediaRef: "m", start: 0, duration: 30)
         let data = try JSONEncoder().encode(clip)
@@ -140,6 +176,7 @@ struct EffectRenderingTests {
             "color.highlightsShadows": ["highlights": 0.3, "shadows": 0.8],
             "color.blacksWhites": ["blacks": 1, "whites": -1],
             "color.vibrance": ["amount": 1],
+            "color.wheels": ["lift_x": 0.45, "lift_y": 0.2, "gain_m": 1.2],
             "blur.gaussian": ["radius": 30],
             "blur.sharpen": ["amount": 2],
             "stylize.vignette": ["intensity": 2, "radius": 0.5],

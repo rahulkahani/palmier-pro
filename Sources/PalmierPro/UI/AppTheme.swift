@@ -74,6 +74,17 @@ enum AppTheme {
         static let tempGradient = [Color(red: 0.32, green: 0.55, blue: 0.92), Color(red: 0.95, green: 0.72, blue: 0.32)]
         /// Tint track: green (low) → magenta (high).
         static let tintGradient = [Color(red: 0.42, green: 0.78, blue: 0.45), Color(red: 0.82, green: 0.38, blue: 0.72)]
+        /// Master luma track: near-black → near-white.
+        static let lumaGradient = [Color(white: 0.05), Color(white: 0.95)]
+    }
+
+    // MARK: - Color wheels
+
+    enum Wheels {
+        static let padSize: CGFloat = 96
+        static let puckSize: CGFloat = 10
+        static let ringWidth: CGFloat = 1
+        static let crosshairColor = Color.white.opacity(AppTheme.Opacity.faint)
     }
 
     enum Curve {

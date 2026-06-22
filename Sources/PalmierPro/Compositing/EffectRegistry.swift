@@ -76,7 +76,7 @@ struct EffectDescriptor: Identifiable, Sendable {
 
 enum EffectRegistry {
 
-    static let all: [EffectDescriptor] = color + lut + curves + blur + stylize
+    static let all: [EffectDescriptor] = color + wheels + lut + curves + blur + stylize
 
     private static let color: [EffectDescriptor] = [
         EffectDescriptor(
@@ -175,6 +175,30 @@ enum EffectRegistry {
             params: [EffectParamSpec(key: "amount", label: "Vibrance", range: -1...1, defaultValue: 0, unit: "")],
             apply: { image, p, _ in
                 image.applyingFilter("CIVibrance", parameters: ["inputAmount": p.value("amount")])
+            }
+        ),
+    ]
+
+    private static let wheels: [EffectDescriptor] = [
+        EffectDescriptor(
+            id: "color.wheels", displayName: "Color Wheels", category: "Color",
+            params: [
+                EffectParamSpec(key: "lift_x", label: "Lift", range: -1...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "lift_y", label: "Lift", range: -1...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "lift_m", label: "Lift", range: -0.5...0.5, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "gamma_x", label: "Gamma", range: -1...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "gamma_y", label: "Gamma", range: -1...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "gamma_m", label: "Gamma", range: 0.5...2, defaultValue: 1, unit: ""),
+                EffectParamSpec(key: "gain_x", label: "Gain", range: -1...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "gain_y", label: "Gain", range: -1...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "gain_m", label: "Gain", range: 0.5...1.5, defaultValue: 1, unit: ""),
+            ],
+            apply: { image, p, _ in
+                guard let cube = ColorWheels.cube(for: p) else { return image }
+                return image.applyingFilter("CIColorCube", parameters: [
+                    "inputCubeDimension": cube.dimension,
+                    "inputCubeData": cube.data,
+                ])
             }
         ),
     ]
