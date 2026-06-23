@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreImage
 import Foundation
 import ImageIO
 import Testing
@@ -23,17 +24,15 @@ struct EffectModelTests {
 
     /// The master curve is a true luma curve: lifting it raises luminance while keeping
     /// the R:G:B ratio (chroma) of a non-clipping voxel constant.
-    @Test func masterCurveIsLumaPreservingChroma() throws {
+    @Test func masterCurveIsLumaPreservingChroma() {
+        let ctx = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
         let curve = GradeCurve(master: [CurvePoint(x: 0, y: 0.2), CurvePoint(x: 1, y: 1)])
-        let n = 17
-        let cube = try #require(curve.cubeData(dimension: n))
-        let f = cube.data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
-
-        // A mid, saturated voxel that won't clip after the lift.
-        let (ri, gi, bi) = (10, 6, 2)
-        let idx = ((bi * n + gi) * n + ri) * 4
-        let (outR, outG, outB) = (Double(f[idx]), Double(f[idx + 1]), Double(f[idx + 2]))
-        let (inR, inG, inB) = (Double(ri) / 16, Double(gi) / 16, Double(bi) / 16)
+        let (inR, inG, inB) = (0.6, 0.45, 0.3)
+        let img = CIImage(color: CIColor(red: inR, green: inG, blue: inB)).cropped(to: CGRect(x: 0, y: 0, width: 4, height: 4))
+        var px = [Float](repeating: 0, count: 4)
+        ctx.render(GradeCurveKernel.apply(img, curve: curve), toBitmap: &px, rowBytes: 16,
+                   bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+        let (outR, outG, outB) = (Double(px[0]), Double(px[1]), Double(px[2]))
 
         #expect(abs(outR / outG - inR / inG) < 0.02, "R:G ratio should hold (chroma preserved)")
         #expect(abs(outR / outB - inR / inB) < 0.02, "R:B ratio should hold (chroma preserved)")
@@ -42,40 +41,20 @@ struct EffectModelTests {
         #expect(outLuma > inLuma + 0.05, "lifted luma curve should raise luminance")
     }
 
-    @Test func curveCubePacksRGBAWithRedFastest() throws {
-        let curve = GradeCurve(
-            red: [CurvePoint(x: 0, y: 0), CurvePoint(x: 1, y: 0.25)],
-            green: [CurvePoint(x: 0, y: 0), CurvePoint(x: 1, y: 0.5)],
-            blue: [CurvePoint(x: 0, y: 0), CurvePoint(x: 1, y: 0.75)]
-        )
-        let n = 17
-        let cube = try #require(curve.cubeData(dimension: n))
-        let f = cube.data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
-        let (ri, gi, bi) = (3, 5, 7)
-        let idx = ((bi * n + gi) * n + ri) * 4
-
-        #expect(abs(Double(f[idx]) - Double(ri) / Double(n - 1) * 0.25) < 0.0001)
-        #expect(abs(Double(f[idx + 1]) - Double(gi) / Double(n - 1) * 0.5) < 0.0001)
-        #expect(abs(Double(f[idx + 2]) - Double(bi) / Double(n - 1) * 0.75) < 0.0001)
-        #expect(f[idx + 3] == 1)
-    }
-
-    @Test func colorWheelCubePacksRGBAWithRedFastest() throws {
-        let values = [
-            "lift_x": 0.0, "lift_y": 0.0, "lift_m": 0.0,
-            "gamma_x": 0.0, "gamma_y": 0.0, "gamma_m": 1.0,
-            "gain_x": 0.0, "gain_y": 0.0, "gain_m": 0.5,
-        ]
-        let cube = try #require(ColorWheels.cube(for: ResolvedEffectParams(values: values, strings: [:])))
-        let f = cube.data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
-        let n = cube.dimension
-        let (ri, gi, bi) = (3, 5, 7)
-        let idx = ((bi * n + gi) * n + ri) * 4
-
-        #expect(abs(Double(f[idx]) - Double(ri) / Double(n - 1) * 0.5) < 0.0001)
-        #expect(abs(Double(f[idx + 1]) - Double(gi) / Double(n - 1) * 0.5) < 0.0001)
-        #expect(abs(Double(f[idx + 2]) - Double(bi) / Double(n - 1) * 0.5) < 0.0001)
-        #expect(f[idx + 3] == 1)
+    @Test func colorWheelGainMasterScalesAllChannels() {
+        let ctx = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        let p = ResolvedEffectParams(values: [
+            "lift_x": 0, "lift_y": 0, "lift_m": 0,
+            "gamma_x": 0, "gamma_y": 0, "gamma_m": 1,
+            "gain_x": 0, "gain_y": 0, "gain_m": 0.5,
+        ], strings: [:])
+        let img = CIImage(color: CIColor(red: 0.8, green: 0.6, blue: 0.4)).cropped(to: CGRect(x: 0, y: 0, width: 4, height: 4))
+        var px = [Float](repeating: 0, count: 4)
+        ctx.render(WheelsKernel.apply(img, params: p), toBitmap: &px, rowBytes: 16,
+                   bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+        // gain_m 0.5, gamma 1, lift 0 → exact half (no cube quantization).
+        #expect(abs(Double(px[0]) - 0.4) < 1e-3 && abs(Double(px[1]) - 0.3) < 1e-3 && abs(Double(px[2]) - 0.2) < 1e-3,
+                "got \(px[0]) \(px[1]) \(px[2])")
     }
 
     @Test func clipWithoutEffectsOmitsKey() throws {
@@ -179,8 +158,11 @@ struct EffectRenderingTests {
             "color.wheels": ["lift_x": 0.45, "lift_y": 0.2, "gain_m": 1.2],
             "blur.gaussian": ["radius": 30],
             "blur.sharpen": ["amount": 2],
-            "stylize.vignette": ["intensity": 2, "radius": 0.5],
-            "stylize.glow": ["intensity": 1, "radius": 20],
+            "stylize.vignette": ["amount": -1, "midpoint": 0.2],
+            "stylize.grain": ["amount": 1, "size": 1.5],
+            "detail.clarity": ["clarity": 1, "dehaze": 0],
+            "key.chroma": ["keyHue": 0.333, "tolerance": 0.5],
+            "stylize.glow": ["intensity": 1, "radius": 20, "threshold": 0],
             "blur.noiseReduction": ["amount": 1],
             "blur.motion": ["radius": 20, "angle": 0],
         ]
@@ -203,9 +185,10 @@ struct EffectRenderingTests {
         // Vibrance's delta is the least predictable across renderers, so render it
         // (catches a bad filter key) but don't assert a pixel change.
         let noOpOnSaturated: Set<String> = ["color.vibrance"]
-        // color.curves carries a JSON curve, not Double params — covered by its own test.
+        // color.curves / color.hueCurves carry JSON curves, not Double params — covered by their own tests.
+        let jsonCurveEffects: Set<String> = ["color.curves", "color.hueCurves"]
         let base = try await frame(nil)
-        for descriptor in EffectRegistry.all where descriptor.resourceKey == nil && descriptor.id != "color.curves" {
+        for descriptor in EffectRegistry.all where descriptor.resourceKey == nil && !jsonCurveEffects.contains(descriptor.id) {
             let params = nonDefault[descriptor.id]
             #expect(params != nil, "add non-default params for \(descriptor.id) to this test")
             let rendered = try await frame([Effect.make(descriptor.id, params ?? [:])])

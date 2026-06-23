@@ -279,6 +279,51 @@ final class VideoEngine {
         return (y, r, g, b)
     }
 
+    /// Hue distribution of the current composited frame — pixel count per hue bucket, weighted by
+    /// saturation so achromatic pixels don't show. Drives the silhouette behind the hue curves.
+    func hueHistogram(frame: Int? = nil, count: Int = 96) async -> [Float]? {
+        guard let item = player.currentItem else { return nil }
+        let time = frame.flatMap { frame -> CMTime? in
+            guard let fps = editor?.timeline.fps, fps > 0 else { return nil }
+            return CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps))
+        } ?? player.currentTime()
+        let generator = AVAssetImageGenerator(asset: item.asset)
+        generator.videoComposition = item.videoComposition
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        generator.maximumSize = CGSize(width: 320, height: 180)
+        guard let cg = try? await generator.image(at: time).image else { return nil }
+        return Self.hueHistogram(from: cg, count: count)
+    }
+
+    /// Saturation-weighted hue histogram; sqrt-compressed so small humps stay visible. Testable.
+    nonisolated static func hueHistogram(from cg: CGImage, count: Int = 96) -> [Float]? {
+        let w = cg.width, h = cg.height
+        guard w > 0, h > 0 else { return nil }
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = px.withUnsafeMutableBytes({ ptr in
+            CGContext(data: ptr.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                      bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        }) else { return nil }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+        var bins = [Float](repeating: 0, count: count)
+        var i = 0
+        while i < px.count {
+            let r = Float(px[i]) / 255, g = Float(px[i + 1]) / 255, b = Float(px[i + 2]) / 255
+            i += 4
+            let mx = max(r, max(g, b)), mn = min(r, min(g, b)), d = mx - mn
+            guard d > 1e-4, mx > 1e-4 else { continue }
+            var hue: Float = mx == r ? (g - b) / d : (mx == g ? (b - r) / d + 2 : (r - g) / d + 4)
+            hue = (hue / 6).truncatingRemainder(dividingBy: 1); if hue < 0 { hue += 1 }
+            bins[min(count - 1, Int(hue * Float(count)))] += d / mx
+        }
+        var maxV: Float = 0; for v in bins { maxV = max(maxV, v) }
+        if maxV > 0 { for j in 0..<count { bins[j] = (bins[j] / maxV).squareRoot() } }
+        return bins
+    }
+
     // MARK: - Seek Coordinator
 
     private func enqueueInteractiveSeek(time: CMTime, tolerance: CMTime) {

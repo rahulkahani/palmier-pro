@@ -13,6 +13,7 @@ struct EffectParamSpec: Sendable {
 struct ResolvedEffectParams: Sendable {
     let values: [String: Double]
     let strings: [String: String]
+    var frame: Int = 0   // timeline frame, for effects that animate (e.g. grain)
 
     func value(_ key: String) -> Double { values[key] ?? 0 }
     func string(_ key: String) -> String? { strings[key] }
@@ -55,7 +56,7 @@ struct EffectDescriptor: Identifiable, Sendable {
             values[spec.key] = min(spec.range.upperBound, max(spec.range.lowerBound, raw))
         }
         let strings = effect.params.compactMapValues(\.string)
-        return ResolvedEffectParams(values: values, strings: strings)
+        return ResolvedEffectParams(values: values, strings: strings, frame: offset)
     }
 
     /// Full application incl. optional linear-light wrapping.
@@ -76,7 +77,7 @@ struct EffectDescriptor: Identifiable, Sendable {
 
 enum EffectRegistry {
 
-    static let all: [EffectDescriptor] = color + wheels + lut + curves + blur + stylize
+    static let all: [EffectDescriptor] = color + wheels + hueCurves + lut + curves + detail + blur + stylize + key
 
     private static let color: [EffectDescriptor] = [
         EffectDescriptor(
@@ -132,23 +133,8 @@ enum EffectRegistry {
                                 defaultValue: 0, unit: ""),
             ],
             apply: { image, p, _ in
-                let h = p.value("highlights")
-                // Below 0: recover highlights (CIHighlightShadowAdjust, neutral 1).
-                // Above 0: boost via a gentle upper-tone-curve lift (the filter can't brighten).
-                var out = image.applyingFilter("CIHighlightShadowAdjust", parameters: [
-                    "inputHighlightAmount": 1 + min(0, h),
-                    "inputShadowAmount": p.value("shadows"),
-                ])
-                if h > 0 {
-                    out = out.applyingFilter("CIToneCurve", parameters: [
-                        "inputPoint0": CIVector(x: 0, y: 0),
-                        "inputPoint1": CIVector(x: 0.25, y: 0.25),
-                        "inputPoint2": CIVector(x: 0.5, y: 0.5),
-                        "inputPoint3": CIVector(x: 0.75, y: min(1, 0.75 + h * 0.18)),
-                        "inputPoint4": CIVector(x: 1, y: 1),
-                    ])
-                }
-                return out
+                HighlightsShadowsKernel.apply(image, highlights: p.value("highlights"),
+                                              shadows: p.value("shadows"))
             }
         ),
         EffectDescriptor(
@@ -158,16 +144,7 @@ enum EffectRegistry {
                 EffectParamSpec(key: "whites", label: "Whites", range: -1...1, defaultValue: 0, unit: ""),
             ],
             apply: { image, p, _ in
-                // Shift the tone curve's dark/bright endpoints; clamp outputs to [0,1].
-                let b = p.value("blacks") * 0.5, w = p.value("whites") * 0.5
-                func cp(_ x: Double, _ y: Double) -> CIVector { CIVector(x: x, y: min(1, max(0, y))) }
-                return image.applyingFilter("CIToneCurve", parameters: [
-                    "inputPoint0": cp(0, b),
-                    "inputPoint1": cp(0.25, 0.25 + b * 0.5),
-                    "inputPoint2": cp(0.5, 0.5),
-                    "inputPoint3": cp(0.75, 0.75 + w * 0.5),
-                    "inputPoint4": cp(1, 1 + w),
-                ])
+                LevelsKernel.apply(image, blacks: p.value("blacks"), whites: p.value("whites"))
             }
         ),
         EffectDescriptor(
@@ -194,11 +171,18 @@ enum EffectRegistry {
                 EffectParamSpec(key: "gain_m", label: "Gain", range: 0.5...1.5, defaultValue: 1, unit: ""),
             ],
             apply: { image, p, _ in
-                guard let cube = ColorWheels.cube(for: p) else { return image }
-                return image.applyingFilter("CIColorCube", parameters: [
-                    "inputCubeDimension": cube.dimension,
-                    "inputCubeData": cube.data,
-                ])
+                WheelsKernel.apply(image, params: p)
+            }
+        ),
+    ]
+
+    private static let hueCurves: [EffectDescriptor] = [
+        EffectDescriptor(
+            id: "color.hueCurves", displayName: "Hue Curves", category: "Color",
+            params: [],
+            apply: { image, p, _ in
+                guard let json = p.string("curves"), let curves = HueCurves(json: json) else { return image }
+                return HueCurveKernel.apply(image, curves: curves)
             }
         ),
     ]
@@ -210,20 +194,8 @@ enum EffectRegistry {
                                      defaultValue: 1, unit: "")],
             resourceKey: "path",
             apply: { image, p, _ in
-                guard let path = p.string("path"), let cube = LUTLoader.load(path: path) else {
-                    return image
-                }
-                let graded = image.applyingFilter("CIColorCube", parameters: [
-                    "inputCubeDimension": cube.dimension,
-                    "inputCubeData": cube.data,
-                ])
-                let intensity = p.value("intensity")
-                guard intensity < 1 else { return graded }
-                return graded.applyingFilter("CIDissolveTransition", parameters: [
-                    kCIInputImageKey: image,
-                    kCIInputTargetImageKey: graded,
-                    kCIInputTimeKey: intensity,
-                ])
+                guard let path = p.string("path"), let cube = LUTLoader.load(path: path) else { return image }
+                return LUTTetraKernel.apply(image, cube: cube, key: path, intensity: p.value("intensity"))
             }
         ),
     ]
@@ -233,12 +205,8 @@ enum EffectRegistry {
             id: "color.curves", displayName: "Curves", category: "Color",
             params: [],
             apply: { image, p, _ in
-                guard let json = p.string("curve"),
-                      let cube = CurveLUTCache.cube(forJSON: json) else { return image }
-                return image.applyingFilter("CIColorCube", parameters: [
-                    "inputCubeDimension": cube.dimension,
-                    "inputCubeData": cube.data,
-                ])
+                guard let json = p.string("curve"), let curve = GradeCurve(json: json) else { return image }
+                return GradeCurveKernel.apply(image, curve: curve)
             }
         ),
     ]
@@ -304,37 +272,70 @@ enum EffectRegistry {
 
     private static let stylize: [EffectDescriptor] = [
         EffectDescriptor(
-            id: "stylize.vignette", displayName: "Vignette", category: "Stylize",
+            id: "stylize.grain", displayName: "Film Grain", category: "Stylize",
             params: [
-                EffectParamSpec(key: "intensity", label: "Intensity", range: 0...2,
-                                defaultValue: 0, unit: ""),
-                EffectParamSpec(key: "radius", label: "Radius", range: 0...2.5,
-                                defaultValue: 1.5, unit: ""),
+                EffectParamSpec(key: "amount", label: "Amount", range: 0...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "size", label: "Size", range: 0.5...4, defaultValue: 1.5, unit: ""),
             ],
             apply: { image, p, _ in
-                image.applyingFilter("CIVignette", parameters: [
-                    kCIInputIntensityKey: p.value("intensity"),
-                    kCIInputRadiusKey: p.value("radius"),
-                ])
+                GrainKernel.apply(image, amount: p.value("amount"), size: p.value("size"), frame: p.frame)
+            }
+        ),
+        EffectDescriptor(
+            id: "stylize.vignette", displayName: "Vignette", category: "Stylize",
+            params: [
+                EffectParamSpec(key: "amount", label: "Amount", range: -1...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "midpoint", label: "Midpoint", range: 0...1, defaultValue: 0.5, unit: ""),
+                EffectParamSpec(key: "roundness", label: "Roundness", range: -1...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "feather", label: "Feather", range: 0...1, defaultValue: 0.5, unit: ""),
+            ],
+            apply: { image, p, extent in
+                VignetteKernel.apply(image, extent: extent, amount: p.value("amount"),
+                                     midpoint: p.value("midpoint"), roundness: p.value("roundness"),
+                                     feather: p.value("feather"))
             }
         ),
         EffectDescriptor(
             id: "stylize.glow", displayName: "Glow", category: "Stylize",
             params: [
-                EffectParamSpec(key: "intensity", label: "Glow", range: 0...1,
-                                defaultValue: 0, unit: ""),
-                EffectParamSpec(key: "radius", label: "Radius", range: 0...100,
-                                defaultValue: 20, unit: "px"),
+                EffectParamSpec(key: "intensity", label: "Glow", range: 0...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "radius", label: "Radius", range: 0...100, defaultValue: 20, unit: "px"),
+                EffectParamSpec(key: "threshold", label: "Threshold", range: 0...1, defaultValue: 0.6, unit: ""),
+                EffectParamSpec(key: "warmth", label: "Warmth", range: 0...1, defaultValue: 0, unit: ""),
             ],
             apply: { image, p, extent in
-                let intensity = p.value("intensity")
-                guard intensity > 0 else { return image }
-                return image.clampedToExtent()
-                    .applyingFilter("CIBloom", parameters: [
-                        kCIInputRadiusKey: p.value("radius"),
-                        kCIInputIntensityKey: intensity,
-                    ])
-                    .cropped(to: extent)
+                GlowKernel.apply(image, extent: extent, intensity: p.value("intensity"),
+                                 radius: p.value("radius"), threshold: p.value("threshold"),
+                                 warmth: p.value("warmth"))
+            }
+        ),
+    ]
+
+    private static let detail: [EffectDescriptor] = [
+        EffectDescriptor(
+            id: "detail.clarity", displayName: "Clarity & Haze", category: "Detail",
+            params: [
+                EffectParamSpec(key: "clarity", label: "Clarity", range: -1...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "dehaze", label: "Dehaze", range: -1...1, defaultValue: 0, unit: ""),
+            ],
+            apply: { image, p, extent in
+                ClarityKernel.apply(image, extent: extent, clarity: p.value("clarity"), dehaze: p.value("dehaze"))
+            }
+        ),
+    ]
+
+    private static let key: [EffectDescriptor] = [
+        EffectDescriptor(
+            id: "key.chroma", displayName: "Chroma Key", category: "Key",
+            params: [
+                EffectParamSpec(key: "keyHue", label: "Key Hue", range: 0...1, defaultValue: 0.333, unit: ""),
+                EffectParamSpec(key: "tolerance", label: "Tolerance", range: 0...1, defaultValue: 0, unit: ""),
+                EffectParamSpec(key: "softness", label: "Softness", range: 0...1, defaultValue: 0.5, unit: ""),
+                EffectParamSpec(key: "spill", label: "Spill", range: 0...1, defaultValue: 0.5, unit: ""),
+            ],
+            apply: { image, p, _ in
+                ChromaKeyKernel.apply(image, keyHue: p.value("keyHue"), tolerance: p.value("tolerance"),
+                                      softness: p.value("softness"), spill: p.value("spill"))
             }
         ),
     ]
@@ -344,4 +345,17 @@ enum EffectRegistry {
     )
 
     static func descriptor(id: String) -> EffectDescriptor? { byId[id] }
+
+    /// Canonical order the always-on adjustment sections insert their effects in.
+    static let canonicalOrder: [String] = [
+        "color.exposure", "color.contrast", "color.highlightsShadows", "color.blacksWhites",
+        "color.temperature", "color.vibrance", "color.saturation", "color.wheels", "color.curves",
+        "color.hueCurves", "color.lut", "detail.clarity", "key.chroma", "blur.gaussian", "blur.sharpen",
+        "blur.noiseReduction", "blur.motion", "stylize.grain", "stylize.vignette", "stylize.glow",
+    ]
+
+    static func insertIndex(_ effects: [Effect], for id: String) -> Int {
+        let rank = canonicalOrder.firstIndex(of: id) ?? Int.max
+        return effects.firstIndex { (canonicalOrder.firstIndex(of: $0.type) ?? Int.max) > rank } ?? effects.count
+    }
 }

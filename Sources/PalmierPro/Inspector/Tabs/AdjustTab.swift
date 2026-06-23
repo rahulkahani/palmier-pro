@@ -41,13 +41,16 @@ extension InspectorView {
         ]
     }
 
-    /// Single-knob effects as always-on rows, labeled by effect name.
-    private var stylizeControls: [EffectControl] {
+    private var blurControls: [EffectControl] {
+        [EffectControl(effectId: "blur.gaussian", paramKey: "radius", label: "Blur")]
+    }
+
+    private var vignetteControls: [EffectControl] {
         [
-            EffectControl(effectId: "blur.gaussian", paramKey: "radius", label: "Blur"),
-            EffectControl(effectId: "blur.sharpen", paramKey: "amount", label: "Sharpen"),
-            EffectControl(effectId: "blur.noiseReduction", paramKey: "amount", label: "Noise Reduction"),
-            EffectControl(effectId: "stylize.vignette", paramKey: "intensity", label: "Vignette"),
+            EffectControl(effectId: "stylize.vignette", paramKey: "amount", label: "Amount"),
+            EffectControl(effectId: "stylize.vignette", paramKey: "midpoint", label: "Midpoint"),
+            EffectControl(effectId: "stylize.vignette", paramKey: "roundness", label: "Roundness"),
+            EffectControl(effectId: "stylize.vignette", paramKey: "feather", label: "Feather"),
         ]
     }
 
@@ -63,15 +66,34 @@ extension InspectorView {
         [
             EffectControl(effectId: "stylize.glow", paramKey: "intensity", label: "Intensity"),
             EffectControl(effectId: "stylize.glow", paramKey: "radius", label: "Radius"),
+            EffectControl(effectId: "stylize.glow", paramKey: "threshold", label: "Threshold"),
+            EffectControl(effectId: "stylize.glow", paramKey: "warmth", label: "Warmth"),
         ]
     }
 
-    /// Canonical order the fixed adjustment sections insert their effects in.
-    private var alwaysOnEffectOrder: [String] {
-        ["color.exposure", "color.contrast", "color.highlightsShadows", "color.blacksWhites",
-         "color.temperature", "color.vibrance", "color.saturation", "color.wheels", "color.curves",
-         "color.lut", "blur.gaussian", "blur.sharpen", "blur.noiseReduction", "blur.motion",
-         "stylize.vignette", "stylize.glow"]
+    private var chromaKeyControls: [EffectControl] {
+        [
+            EffectControl(effectId: "key.chroma", paramKey: "keyHue", label: "Key Hue"),
+            EffectControl(effectId: "key.chroma", paramKey: "tolerance", label: "Tolerance"),
+            EffectControl(effectId: "key.chroma", paramKey: "softness", label: "Softness"),
+            EffectControl(effectId: "key.chroma", paramKey: "spill", label: "Spill"),
+        ]
+    }
+
+    private var grainControls: [EffectControl] {
+        [
+            EffectControl(effectId: "stylize.grain", paramKey: "amount", label: "Amount"),
+            EffectControl(effectId: "stylize.grain", paramKey: "size", label: "Size"),
+        ]
+    }
+
+    private var detailControls: [EffectControl] {
+        [
+            EffectControl(effectId: "blur.sharpen", paramKey: "amount", label: "Sharpen"),
+            EffectControl(effectId: "blur.noiseReduction", paramKey: "amount", label: "Noise Reduction"),
+            EffectControl(effectId: "detail.clarity", paramKey: "clarity", label: "Clarity"),
+            EffectControl(effectId: "detail.clarity", paramKey: "dehaze", label: "Dehaze"),
+        ]
     }
 
     private var basicEffectIds: Set<String> {
@@ -79,7 +101,7 @@ extension InspectorView {
     }
 
     private var effectsEffectIds: Set<String> {
-        Set((stylizeControls + motionBlurControls + glowControls).map(\.effectId))
+        Set((detailControls + blurControls + motionBlurControls + vignetteControls + grainControls + glowControls + chromaKeyControls).map(\.effectId))
     }
 
     @ViewBuilder
@@ -97,13 +119,20 @@ extension InspectorView {
             adjustSection(title: "Color Wheels", effectIds: ["color.wheels"], clips: clips) {
                 wheelsContent(clips: clips)
             }
+            adjustSection(title: "Hue Curves", effectIds: ["color.hueCurves"], clips: clips) {
+                hueCurvesContent(clips: clips)
+            }
             adjustSection(title: "LUTs", effectIds: ["color.lut"], clips: clips) {
                 lutContent(clips: clips)
             }
             adjustSection(title: "Effects", effectIds: effectsEffectIds, clips: clips) {
-                adjustSubgroup(title: "Stylize", controls: stylizeControls, clips: clips)
+                adjustSubgroup(title: "Detail", controls: detailControls, clips: clips)
+                adjustSubgroup(title: "Blur", controls: blurControls, clips: clips)
                 adjustSubgroup(title: "Motion Blur", controls: motionBlurControls, clips: clips)
+                adjustSubgroup(title: "Vignette", controls: vignetteControls, clips: clips)
+                adjustSubgroup(title: "Film Grain", controls: grainControls, clips: clips)
                 adjustSubgroup(title: "Glow", controls: glowControls, clips: clips)
+                adjustSubgroup(title: "Chroma Key", controls: chromaKeyControls, clips: clips)
             }
         }
     }
@@ -175,11 +204,26 @@ extension InspectorView {
 
     @ViewBuilder
     private func adjustSubgroup(title: String, controls: [EffectControl], clips: [Clip]) -> some View {
+        let expanded = !collapsedAdjustSubgroups.contains(title)
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            sectionTitleLabel(title: title)
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                ForEach(controls, id: \.self) { control in
-                    adjustmentRow(control, clips: clips)
+            HStack(spacing: AppTheme.Spacing.xs) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .frame(width: AppTheme.IconSize.xxs, alignment: .center)
+                sectionTitleLabel(title: title)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if expanded { collapsedAdjustSubgroups.insert(title) }
+                else { collapsedAdjustSubgroups.remove(title) }
+            }
+            if expanded {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    ForEach(controls, id: \.self) { control in
+                        adjustmentRow(control, clips: clips)
+                    }
                 }
             }
         }
@@ -238,6 +282,36 @@ extension InspectorView {
             var effect = Effect(type: "color.curves")
             effect.params["curve"] = EffectParam(string: json)
             effects.insert(effect, at: alwaysOnInsertIndex(effects, for: "color.curves"))
+        }
+    }
+
+    // MARK: Hue curves
+
+    @ViewBuilder
+    private func hueCurvesContent(clips: [Clip]) -> some View {
+        HueCurveEditorView(
+            curves: HueCurves.read(from: clips.first?.effects ?? []),
+            onChange: { setHueCurveChannel($0, points: $1, clips: clips, commit: false, action: "Edit Hue Curves") },
+            onCommit: { setHueCurveChannel($0, points: $1, clips: clips, commit: true, action: "Edit Hue Curves") }
+        )
+    }
+
+    private func setHueCurveChannel(
+        _ channel: HueCurves.Channel,
+        points: [CurvePoint],
+        clips: [Clip],
+        commit: Bool,
+        action: String
+    ) {
+        let mutate: (inout [Effect]) -> Void = { effects in
+            var curves = HueCurves.read(from: effects)
+            curves.set(channel, points)
+            curves.upsert(into: &effects)
+        }
+        if commit {
+            commitEffects(clips, actionName: action, mutate)
+        } else {
+            applyEffects(clips, mutate)
         }
     }
 
@@ -478,8 +552,7 @@ extension InspectorView {
     }
 
     private func alwaysOnInsertIndex(_ effects: [Effect], for effectId: String) -> Int {
-        let rank = alwaysOnEffectOrder.firstIndex(of: effectId) ?? Int.max
-        return effects.firstIndex { (alwaysOnEffectOrder.firstIndex(of: $0.type) ?? Int.max) > rank } ?? effects.count
+        EffectRegistry.insertIndex(effects, for: effectId)
     }
 
     private func anyAdjusted(_ ids: Set<String>, clips: [Clip]) -> Bool {
