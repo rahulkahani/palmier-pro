@@ -26,8 +26,8 @@ enum ToolName: String, CaseIterable, Sendable {
     case getTranscript = "get_transcript"
     case inspectTimeline = "inspect_timeline"
     case searchMedia = "search_media"
-    case setColorGrade = "set_color_grade"
-    case applyLut = "apply_lut"
+    case applyColor = "apply_color"
+    case applyEffect = "apply_effect"
     case inspectColor = "inspect_color"
     case listFolders = "list_folders"
     case createFolder = "create_folder"
@@ -589,20 +589,41 @@ enum ToolDefinitions {
             )
         ),
         AgentTool(
-            name: .applyLut,
-            description: "Apply an existing .cube 3D LUT file to video/image clips (e.g. a film-look LUT pack). Pass the path to a real .cube file — the agent does not author LUT data. The LUT is copied into the project's storage so it survives saves. Applies on top of any primary grade (replaces only a prior LUT); set intensity to blend it back. Undoable. Verify with inspect_timeline.",
+            name: .applyEffect,
+            description: """
+            Apply non-color effects (blur, sharpen, stylize, detail, key) to video/image clips as a live, \
+            editable effect stack — the looks/FX path, distinct from apply_color (grading). MERGES: each effect \
+            you pass is added or updated by type; effects you don't mention are left in place. Pass enabled:false \
+            to bypass one without removing it, or list its type in `remove` to delete it. Out-of-range params are \
+            clamped; params you omit keep their current (or default) value. Effects render in a fixed canonical \
+            order regardless of the order you pass them. Undoable. Verify with inspect_timeline.
+
+            Available effects — type: param (range, default):
+            \(Self.effectCatalog())
+            """,
             inputSchema: objectSchema(
                 properties: [
                     "clipIds": ["type": "array", "items": ["type": "string"], "description": "Clip ids from get_timeline."],
-                    "path": ["type": "string", "description": "Absolute path to a .cube 3D LUT file (~ is expanded)."],
-                    "strength": ["type": "number", "description": "0–1 LUT intensity/blend. Defaults to 1.0."],
+                    "effects": [
+                        "type": "array",
+                        "description": "Effects to add or update on the clips.",
+                        "items": objectSchema(
+                            properties: [
+                                "type": ["type": "string", "description": "Effect type id, e.g. stylize.glow (see list above)."],
+                                "params": ["type": "object", "description": "Param values keyed by name. Out-of-range values are clamped; omitted params keep their current/default value."],
+                                "enabled": ["type": "boolean", "description": "Default true. false bypasses the effect without removing it."],
+                            ],
+                            required: ["type"]
+                        ),
+                    ],
+                    "remove": ["type": "array", "items": ["type": "string"], "description": "Effect type ids to remove from the clips."],
                 ],
-                required: ["clipIds", "path"]
+                required: ["clipIds"]
             )
         ),
         AgentTool(
-            name: .setColorGrade,
-            description: "Author/refine a color grade on video/image clips with named primary controls — the colorist path. MERGES with the clip's current grade: only the params you pass change, the rest are preserved, so you can nudge one knob at a time (pass reset:true to start from neutral). Applies as live, editable color.* effects; non-color effects untouched. Iterate: set_color_grade → inspect_color(clipId, reference) → read the gap → adjust → repeat. Undoable. All knobs optional. Color WHEELS use HUE (0–360°, standard) + AMOUNT per tonal zone — to push shadows teal, set shadowsHue 180 and shadowsAmount ~0.15. CURVES (master + per-channel R/G/B) give precise tone shaping — per-channel curves are tone-selective (e.g. pull the blue curve down in the highlights to tame a bright sky).",
+            name: .applyColor,
+            description: "Author/refine a color grade on video/image clips with named controls — the colorist path, distinct from apply_effect (looks/FX). MERGES with the clip's current grade: only the params you pass change, the rest are preserved, so you can nudge one knob at a time (pass reset:true to start from neutral). Applies as live, editable color.* effects; non-color effects untouched. Iterate: apply_color → inspect_color(clipId, reference) → read the gap → adjust → repeat. Undoable. All knobs optional. Color WHEELS use HUE (0–360°, standard) + AMOUNT per tonal zone — to push shadows teal, set shadowsHue 180 and shadowsAmount ~0.15. CURVES (master + per-channel R/G/B) give precise tone shaping — per-channel curves are tone-selective (e.g. pull the blue curve down in the highlights to tame a bright sky). HUE CURVES do secondary/qualified correction — target a source hue and shift its hue/saturation/lightness (e.g. desaturate greens, warm the skin) without a mask; pair with inspect_color's hueHistogram to find which hues are present. LUT applies a .cube film-look pack on top of the grade.",
             inputSchema: objectSchema(
                 properties: [
                     "clipIds": ["type": "array", "items": ["type": "string"], "description": "Clip ids from get_timeline."],
@@ -634,13 +655,40 @@ enum ToolDefinitions {
                                    "description": "Green-channel tone curve, [x,y] points 0–1."],
                     "blueCurve": ["type": "array", "items": ["type": "array", "items": ["type": "number"]],
                                   "description": "Blue-channel tone curve, [x,y] points 0–1. Tone-selective: e.g. [[0,0],[0.7,0.7],[1,0.85]] pulls blue only in the highlights (tames a sky) and leaves shadows."],
+                    "hueCurves": [
+                        "type": "object",
+                        "description": "Secondary/qualified correction (Resolve-style Hue-vs-Hue/Sat/Lum). Targets replace any existing hue curve. Selectivity is ~±22° around each target hue.",
+                        "properties": [
+                            "targets": [
+                                "type": "array",
+                                "description": "One or more source-hue regions to adjust (e.g. skin at 30, sky at 210).",
+                                "items": objectSchema(
+                                    properties: [
+                                        "targetHue": ["type": "number", "description": "Source hue to act on, 0–360° (0 red, 30 orange/skin, 60 yellow, 120 green, 180 cyan, 210 sky-blue, 240 blue, 300 magenta)."],
+                                        "hueShift": ["type": "number", "description": "Rotate that hue by -30…30°."],
+                                        "satScale": ["type": "number", "description": "Saturation multiplier for that hue, 0–2 (1 = neutral; 1.3 pops it, 0.6 mutes it, 0 fully desaturates)."],
+                                        "lumShift": ["type": "number", "description": "Lightness shift for that hue, -0.5…0.5."],
+                                    ],
+                                    required: ["targetHue"]
+                                ),
+                            ],
+                        ],
+                    ],
+                    "lut": [
+                        "type": "object",
+                        "description": "Apply a .cube 3D LUT (e.g. a film-look pack) on top of the primary grade; replaces any prior LUT. The agent does not author LUT data — pass a real file path.",
+                        "properties": [
+                            "path": ["type": "string", "description": "Absolute path to a .cube file (~ is expanded). Copied into project storage so it survives saves."],
+                            "strength": ["type": "number", "description": "0–1 blend intensity. Default 1. Pass strength alone (no path) to re-blend the existing LUT."],
+                        ],
+                    ],
                 ],
                 required: ["clipIds"]
             )
         ),
         AgentTool(
             name: .inspectColor,
-            description: "Measure color scopes of a timeline clip's current graded look (clipId) OR a raw media asset (mediaRef) — black/white points, % clipping, mean & per-channel levels, shadow/mid/highlight color tilt, saturation, and warm-cool / green-magenta balance — and return the rendered frame too. Use this to grade by the numbers instead of eyeballing, or to measure footage/references before grading. clipId applies the clip's effects (graded look); mediaRef measures the raw asset. Pass a reference image/video id to also measure it and get the subject−reference GAP plus hints that map onto set_color_grade knobs. The loop: set_color_grade → inspect_color(clipId, reference) → read the gap → adjust → repeat until the gap is small.",
+            description: "Measure color scopes of a timeline clip's current graded look (clipId) OR a raw media asset (mediaRef) — black/white points, % clipping, mean & per-channel levels, shadow/mid/highlight color tilt, saturation, warm-cool / green-magenta balance, and a saturation-weighted hueHistogram (12 bins of 30° from 0°/red — shows which hues are present, e.g. an orange cluster = skin, a cyan/blue cluster = sky) — and return the rendered frame too. Use this to grade by the numbers instead of eyeballing, to find hues to target with apply_color's hueCurves, or to measure footage/references before grading. clipId applies the clip's effects (graded look); mediaRef measures the raw asset. Pass a reference image/video id to also measure it and get the subject−reference GAP plus hints that map onto apply_color knobs. The loop: apply_color → inspect_color(clipId, reference) → read the gap → adjust → repeat until the gap is small.",
             inputSchema: objectSchema(
                 properties: [
                     "clipId": ["type": "string", "description": "Timeline clip to measure — returns its current GRADED look (effects applied). Provide this or mediaRef."],
@@ -651,6 +699,20 @@ enum ToolDefinitions {
             )
         ),
     ]
+
+    /// One line per non-color effect for apply_effect's description, generated from the registry.
+    private static func effectCatalog() -> String {
+        func n(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(format: "%g", v) }
+        return EffectRegistry.all
+            .filter { !$0.id.hasPrefix("color.") }
+            .map { d in
+                let params = d.params.map { p in
+                    "\(p.key) (\(n(p.range.lowerBound))…\(n(p.range.upperBound))\(p.unit), default \(n(p.defaultValue)))"
+                }.joined(separator: ", ")
+                return "• \(d.id) — \(d.displayName): \(params.isEmpty ? "no params" : params)"
+            }
+            .joined(separator: "\n")
+    }
 
     private static func objectSchema(
         properties: [String: [String: Any]] = [:],

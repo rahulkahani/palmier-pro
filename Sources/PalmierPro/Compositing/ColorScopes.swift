@@ -18,6 +18,8 @@ struct Scopes: Sendable {
     var saturationMean: Float
     var warmCoolBias: Float     // meanR − meanB  (+ = warm)
     var greenMagentaBias: Float // meanG − (meanR+meanB)/2  (+ = green)
+    var hueHistogram: [Float]   // 12 bins of 30° from 0°/red, saturation-weighted, normalized
+    var colorfulPct: Float      // fraction of pixels with saturation > 0.15
 }
 
 enum ColorScopes {
@@ -50,6 +52,8 @@ enum ColorScopes {
         var nShadow = 0, nMid = 0, nHigh = 0
         var clipLow = 0, clipHigh = 0
         var hist = [Float](repeating: 0, count: 16)
+        var hueHist = [Float](repeating: 0, count: 12)
+        var hueWeight: Float = 0, nColorful = 0
 
         for i in 0..<count {
             let r = Float(bytes[i * 4]) / 255, g = Float(bytes[i * 4 + 1]) / 255, b = Float(bytes[i * 4 + 2]) / 255
@@ -57,7 +61,19 @@ enum ColorScopes {
             rs.append(r); gs.append(g); bs.append(b); ys.append(y)
             sumR += r; sumG += g; sumB += b; sumY += y
             let mx = max(r, max(g, b)), mn = min(r, min(g, b))
-            sumSat += mx > 0 ? (mx - mn) / mx : 0
+            let sat: Float = mx > 0 ? (mx - mn) / mx : 0
+            sumSat += sat
+            if sat > 0.15 {
+                nColorful += 1
+                let d = mx - mn
+                var h: Float = 0
+                if d > 1e-6 {
+                    if mx == r { h = (g - b) / d } else if mx == g { h = 2 + (b - r) / d } else { h = 4 + (r - g) / d }
+                    h /= 6; if h < 0 { h += 1 }
+                }
+                hueHist[min(11, Int(h * 12))] += sat
+                hueWeight += sat
+            }
             let px = SIMD3(r, g, b)
             if y < 1.0 / 3 { shadow += px; nShadow += 1 }
             else if y > 2.0 / 3 { high += px; nHigh += 1 }
@@ -84,7 +100,9 @@ enum ColorScopes {
             shadowRGB: zone(shadow, nShadow), midRGB: zone(mid, nMid), highRGB: zone(high, nHigh),
             saturationMean: sumSat / fc,
             warmCoolBias: meanR - meanB,
-            greenMagentaBias: meanG - (meanR + meanB) / 2
+            greenMagentaBias: meanG - (meanR + meanB) / 2,
+            hueHistogram: hueHist.map { hueWeight > 0 ? $0 / hueWeight : 0 },
+            colorfulPct: Float(nColorful) / fc
         )
     }
 }

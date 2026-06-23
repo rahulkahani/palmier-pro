@@ -3,7 +3,16 @@ import CoreImage
 import Foundation
 
 extension ToolExecutor {
-    fileprivate struct SetColorGradeInput: DecodableToolArgs {
+    struct HueTargetInput: Decodable {
+        let targetHue: Double
+        let hueShift: Double?
+        let satScale: Double?
+        let lumShift: Double?
+    }
+    struct HueCurvesInput: Decodable { let targets: [HueTargetInput]? }
+    struct LutInput: Decodable { let path: String?; let strength: Double? }
+
+    fileprivate struct ApplyColorInput: DecodableToolArgs {
         let clipIds: [String]
         let reset: Bool?
         let exposure: Double?
@@ -23,6 +32,8 @@ extension ToolExecutor {
         let redCurve: [[Double]]?
         let greenCurve: [[Double]]?
         let blueCurve: [[Double]]?
+        let hueCurves: HueCurvesInput?
+        let lut: LutInput?
         static let allowedKeys: Set<String> = [
             "clipIds", "reset", "exposure", "contrast", "saturation", "vibrance", "temperature", "tint",
             "highlights", "shadows", "blacks", "whites",
@@ -30,31 +41,39 @@ extension ToolExecutor {
             "midsHue", "midsAmount", "midsGamma",
             "highsHue", "highsAmount", "highsGain",
             "masterCurve", "redCurve", "greenCurve", "blueCurve",
+            "hueCurves", "lut",
         ]
         var hasAnyParam: Bool {
             [exposure, contrast, saturation, vibrance, temperature, tint, highlights, shadows, blacks, whites,
              shadowsHue, shadowsAmount, shadowsLum, midsHue, midsAmount, midsGamma, highsHue, highsAmount, highsGain]
                 .contains { $0 != nil }
                 || [masterCurve, redCurve, greenCurve, blueCurve].contains { $0 != nil }
+                || (hueCurves?.targets?.isEmpty == false)
+                || lut != nil
         }
     }
 
-    func setColorGrade(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
-        let input: SetColorGradeInput = try decodeToolArgs(args, path: "set_color_grade")
+    func applyColor(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let input: ApplyColorInput = try decodeToolArgs(args, path: "apply_color")
         guard !input.clipIds.isEmpty else { throw ToolError("clipIds is empty.") }
         guard input.hasAnyParam else { throw ToolError("No grade parameters provided.") }
         for id in input.clipIds {
             guard let clip = editor.clipFor(id: id) else { throw ToolError("Clip not found: \(id)") }
             guard clip.mediaType == .video || clip.mediaType == .image else {
-                throw ToolError("Clip \(id) is a \(clip.mediaType.rawValue) clip; set_color_grade needs a video or image clip.")
+                throw ToolError("Clip \(id) is a \(clip.mediaType.rawValue) clip; apply_color needs a video or image clip.")
             }
+        }
+        // LUT file I/O up front so it can throw before mutating.
+        var lutDestPath: String?
+        if let path = input.lut?.path, !path.isEmpty {
+            lutDestPath = try copyLUTIntoProject(path, editor: editor)
         }
         let reset = input.reset ?? false
         let actionName = input.clipIds.count == 1 ? "Color Grade (Agent)" : "Color Grade ×\(input.clipIds.count) (Agent)"
         withUndoGroup(editor, actionName: actionName) {
             editor.mutateClips(ids: Set(input.clipIds), actionName: actionName) { clip in
                 var state = GradeState(effects: reset ? nil : clip.effects)
-                state.apply(input)
+                state.apply(input, lutDestPath: lutDestPath)
                 let nonColor = (clip.effects ?? []).filter { !$0.type.hasPrefix("color.") }
                 clip.effects = nonColor + state.buildStack()
             }
@@ -62,56 +81,22 @@ extension ToolExecutor {
         return .ok("Graded \(input.clipIds.count) clip\(input.clipIds.count == 1 ? "" : "s") (\(reset ? "reset" : "merged")). Verify with inspect_timeline.")
     }
 
-    fileprivate struct ApplyLutInput: DecodableToolArgs {
-        let clipIds: [String]
-        let path: String
-        let strength: Double?
-        static let allowedKeys: Set<String> = ["clipIds", "path", "strength"]
-    }
-
-    /// Applies an existing .cube 3D LUT file to clips
-    func applyLut(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
-        let input: ApplyLutInput = try decodeToolArgs(args, path: "apply_lut")
-        guard !input.clipIds.isEmpty else { throw ToolError("clipIds is empty.") }
-        let strength = clamp3(min(1, max(0, input.strength ?? 1)))
-
-        for id in input.clipIds {
-            guard let clip = editor.clipFor(id: id) else { throw ToolError("Clip not found: \(id)") }
-            guard clip.mediaType == .video || clip.mediaType == .image else {
-                throw ToolError("Clip \(id) is a \(clip.mediaType.rawValue) clip; apply_lut needs a video or image clip.")
-            }
-        }
-
-        let sourceURL = URL(fileURLWithPath: (input.path as NSString).expandingTildeInPath)
+    /// Validates a .cube file and copies it into the project's LUT storage; returns the stored path.
+    private func copyLUTIntoProject(_ path: String, editor: EditorViewModel) throws -> String {
+        let sourceURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
             throw ToolError("No file at path: \(sourceURL.path)")
         }
         guard LUTLoader.load(path: sourceURL.path) != nil else {
             throw ToolError("Not a valid .cube 3D LUT: \(sourceURL.lastPathComponent)")
         }
-
         let lutDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("PalmierPro/luts/\(editor.projectId ?? "default")", isDirectory: true)
         try FileManager.default.createDirectory(at: lutDir, withIntermediateDirectories: true)
         let dest = lutDir.appendingPathComponent(sourceURL.lastPathComponent)
         if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
         try FileManager.default.copyItem(at: sourceURL, to: dest)
-
-        let actionName = input.clipIds.count == 1 ? "Apply LUT (Agent)" : "Apply LUT ×\(input.clipIds.count) (Agent)"
-        withUndoGroup(editor, actionName: actionName) {
-            editor.mutateClips(ids: Set(input.clipIds), actionName: actionName) { clip in
-                var effects = (clip.effects ?? []).filter { $0.type != "color.lut" } // replace prior LUT, keep primaries
-                effects.append(Effect(type: "color.lut", params: [
-                    "path": EffectParam(string: dest.path),
-                    "intensity": EffectParam(value: strength),
-                ]))
-                clip.effects = effects
-            }
-        }
-        return .ok("""
-        Applied LUT \(sourceURL.lastPathComponent) to \(input.clipIds.count) clip\(input.clipIds.count == 1 ? "" : "s") \
-        (intensity \(String(format: "%.2f", strength))). Verify with inspect_timeline.
-        """)
+        return dest.path
     }
 
     fileprivate struct InspectColorInput: DecodableToolArgs {
@@ -249,6 +234,8 @@ extension ToolExecutor {
             "zones": ["shadows": rgb(s.shadowRGB), "mids": rgb(s.midRGB), "highs": rgb(s.highRGB)],
             "saturation": r3(s.saturationMean),
             "balance": ["warmCool": r3(s.warmCoolBias), "greenMagenta": r3(s.greenMagentaBias)],
+            "hueHistogram12": s.hueHistogram.map { r3($0) },
+            "colorfulPct": r3(s.colorfulPct * 100),
         ]
     }
 
@@ -283,6 +270,9 @@ private struct GradeState {
     var highsHue, highsAmount, highsGain: Double?
     var vibrance, saturation: Double?
     var curve: GradeCurve?
+    var hueCurves: HueCurves?
+    var lutPath: String?
+    var lutIntensity: Double?
 
     init(effects: [Effect]?) {
         guard let effects else { return }
@@ -297,6 +287,8 @@ private struct GradeState {
             case "color.vibrance": vibrance = p["amount"]?.value
             case "color.saturation": saturation = p["amount"]?.value
             case "color.curves": curve = (p["curve"]?.string).flatMap { GradeCurve(json: $0) }
+            case "color.hueCurves": hueCurves = (p["curves"]?.string).flatMap { HueCurves(json: $0) }
+            case "color.lut": lutPath = p["path"]?.string; lutIntensity = p["intensity"]?.value
             case "color.wheels":
                 (shadowsHue, shadowsAmount) = Self.hueAmount(p["lift_x"]?.value ?? 0, p["lift_y"]?.value ?? 0)
                 shadowsLum = p["lift_m"]?.value
@@ -309,7 +301,7 @@ private struct GradeState {
         }
     }
 
-    mutating func apply(_ i: ToolExecutor.SetColorGradeInput) {
+    mutating func apply(_ i: ToolExecutor.ApplyColorInput, lutDestPath: String?) {
         if let v = i.exposure { exposure = v }
         if let v = i.temperature { temperature = v }
         if let v = i.tint { tint = v }
@@ -340,14 +332,19 @@ private struct GradeState {
             if let p = points(i.blueCurve) { c.blue = p }
             curve = c
         }
+        if let targets = i.hueCurves?.targets { hueCurves = Self.compileHueCurves(targets) }
+        if let dest = lutDestPath {
+            lutPath = dest
+            lutIntensity = (i.lut?.strength).map { clamp3(min(1, max(0, $0))) } ?? 1
+        } else if let st = i.lut?.strength {
+            lutIntensity = clamp3(min(1, max(0, st)))   // re-blend the existing LUT
+        }
     }
 
+    /// Emits effects in EffectRegistry.canonicalOrder so an agent grade renders identically to the UI's.
     func buildStack() -> [Effect] {
         var stack: [Effect] = []
         if let v = exposure { stack.append(.make("color.exposure", ["ev": clamp3(v)])) }
-        if temperature != nil || tint != nil {
-            stack.append(.make("color.temperature", ["temperature": clamp3(temperature ?? 6500), "tint": clamp3(tint ?? 0)]))
-        }
         if let v = contrast { stack.append(.make("color.contrast", ["amount": clamp3(v)])) }
         if highlights != nil || shadows != nil {
             stack.append(.make("color.highlightsShadows", ["highlights": clamp3(highlights ?? 0), "shadows": clamp3(shadows ?? 0)]))
@@ -355,11 +352,11 @@ private struct GradeState {
         if blacks != nil || whites != nil {
             stack.append(.make("color.blacksWhites", ["blacks": clamp3(blacks ?? 0), "whites": clamp3(whites ?? 0)]))
         }
-        if let curve, !curve.isIdentity, let json = curve.encoded() {
-            var e = Effect(type: "color.curves")
-            e.params["curve"] = EffectParam(string: json)
-            stack.append(e)
+        if temperature != nil || tint != nil {
+            stack.append(.make("color.temperature", ["temperature": clamp3(temperature ?? 6500), "tint": clamp3(tint ?? 0)]))
         }
+        if let v = vibrance { stack.append(.make("color.vibrance", ["amount": clamp3(v)])) }
+        if let v = saturation { stack.append(.make("color.saturation", ["amount": clamp3(v)])) }
         let wheelFields = [shadowsHue, shadowsAmount, shadowsLum, midsHue, midsAmount, midsGamma, highsHue, highsAmount, highsGain]
         if wheelFields.contains(where: { $0 != nil }) {
             let (lx, ly) = Self.xy(shadowsHue, shadowsAmount)
@@ -371,9 +368,60 @@ private struct GradeState {
                 "gain_x": clamp3(hx), "gain_y": clamp3(hy), "gain_m": clamp3(highsGain ?? 1),
             ]))
         }
-        if let v = vibrance { stack.append(.make("color.vibrance", ["amount": clamp3(v)])) }
-        if let v = saturation { stack.append(.make("color.saturation", ["amount": clamp3(v)])) }
+        if let curve, !curve.isIdentity, let json = curve.encoded() {
+            var e = Effect(type: "color.curves")
+            e.params["curve"] = EffectParam(string: json)
+            stack.append(e)
+        }
+        if let hueCurves, !hueCurves.isIdentity, let json = hueCurves.encoded() {
+            var e = Effect(type: "color.hueCurves")
+            e.params["curves"] = EffectParam(string: json)
+            stack.append(e)
+        }
+        if let lutPath {
+            stack.append(Effect(type: "color.lut", params: [
+                "path": EffectParam(string: lutPath),
+                "intensity": EffectParam(value: clamp3(lutIntensity ?? 1)),
+            ]))
+        }
         return stack
+    }
+
+    /// Compiles semantic hue targets into the three hue curves. Each target writes a localized
+    /// bump (peak at the target hue, neutral anchors ±band away) into whichever channels it touches.
+    static func compileHueCurves(_ targets: [ToolExecutor.HueTargetInput]) -> HueCurves {
+        let band = 0.06   // ~22° selectivity
+        func wrap01(_ v: Double) -> Double { let m = v.truncatingRemainder(dividingBy: 1); return m < 0 ? m + 1 : m }
+        func bump(_ pts: inout [CurvePoint], _ center: Double, _ y: Double) {
+            pts.append(CurvePoint(x: wrap01(center), y: y))
+            pts.append(CurvePoint(x: wrap01(center - band), y: HueCurves.neutralY))
+            pts.append(CurvePoint(x: wrap01(center + band), y: HueCurves.neutralY))
+        }
+        func finalize(_ pts: [CurvePoint]) -> [CurvePoint] {
+            guard !pts.isEmpty else { return [] }
+            // Sort by x; on a collision keep the more extreme (non-neutral) point.
+            var byX: [Double: CurvePoint] = [:]
+            for p in pts.sorted(by: { abs($0.y - HueCurves.neutralY) < abs($1.y - HueCurves.neutralY) }) {
+                byX[clamp3(p.x)] = CurvePoint(x: clamp3(p.x), y: clamp3(p.y))
+            }
+            return byX.values.sorted { $0.x < $1.x }
+        }
+        var hue: [CurvePoint] = [], sat: [CurvePoint] = [], lum: [CurvePoint] = []
+        for t in targets {
+            let center = wrap01(t.targetHue / 360)
+            if let hs = t.hueShift, abs(hs) > 1e-6 {
+                bump(&hue, center, HueCurves.neutralY + max(-30, min(30, hs)) / 60)
+            }
+            if let ss = t.satScale, abs(ss - 1) > 1e-6 {
+                bump(&sat, center, HueCurves.neutralY + (max(0, min(2, ss)) - 1) / 2)
+            }
+            if let ls = t.lumShift, abs(ls) > 1e-6 {
+                bump(&lum, center, HueCurves.neutralY + max(-0.5, min(0.5, ls)))
+            }
+        }
+        var hc = HueCurves()
+        hc.hueVsHue = finalize(hue); hc.hueVsSat = finalize(sat); hc.hueVsLum = finalize(lum)
+        return hc
     }
 
     private static func hueAmount(_ x: Double, _ y: Double) -> (Double?, Double?) {
