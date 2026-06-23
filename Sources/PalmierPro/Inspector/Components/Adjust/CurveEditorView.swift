@@ -7,7 +7,7 @@ struct CurveEditorView: View {
 
     @Environment(EditorViewModel.self) private var editor
     @State private var channel: Channel = .master
-    @State private var lastTap: (index: Int, time: Date)?
+    @State private var liveDrag: (points: [CurvePoint], index: Int)?
     @State private var histY: [Float] = []
     @State private var histR: [Float] = []
     @State private var histG: [Float] = []
@@ -69,44 +69,28 @@ struct CurveEditorView: View {
                         ctx.stroke(diag, with: .color(AppTheme.Border.subtleColor),
                                    style: .init(lineWidth: AppTheme.BorderWidth.hairline, dash: [3, 3]))
                         var line = Path()
-                        let pts = sortedPoints
                         for i in stride(from: 0.0, through: 1.0, by: 0.02) {
-                            let p = point(CurvePoint(x: i, y: GradeCurve.eval(pts, i)), size)
+                            let p = point(CurvePoint(x: i, y: GradeCurve.eval(activePoints, i)), size)
                             if i == 0 { line.move(to: p) } else { line.addLine(to: p) }
                         }
                         ctx.stroke(line, with: .color(channel.tint), lineWidth: AppTheme.BorderWidth.medium)
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture { location in addPoint(at: location, size: size) }
+                    .gesture(curveDrag(size))
+                    .onTapGesture(count: 2) { location in removeNearest(to: location, size) }
 
-                    ForEach(Array(sortedPoints.enumerated()), id: \.offset) { index, pt in
+                    ForEach(Array(activePoints.enumerated()), id: \.offset) { _, pt in
                         Circle()
                             .fill(channel.tint)
                             .frame(width: AppTheme.Curve.pointDiameter, height: AppTheme.Curve.pointDiameter)
-                            .frame(width: AppTheme.Curve.pointHitDiameter, height: AppTheme.Curve.pointHitDiameter)
-                            .contentShape(Circle())
                             .position(point(pt, size))
-                            .gesture(
-                                DragGesture(minimumDistance: 0)
-                                    .onChanged { value in
-                                        if abs(value.translation.width) > 2 || abs(value.translation.height) > 2 {
-                                            drag(index: index, to: value.location, size: size, commit: false)
-                                        }
-                                    }
-                                    .onEnded { value in
-                                        if abs(value.translation.width) > 2 || abs(value.translation.height) > 2 {
-                                            drag(index: index, to: value.location, size: size, commit: true)
-                                        } else {
-                                            handleTap(index: index)
-                                        }
-                                    }
-                            )
+                            .allowsHitTesting(false)
                     }
                 }
             }
             .frame(height: AppTheme.Curve.editorHeight)
 
-            Text("Click to add a point · drag to shape · double-click to remove")
+            Text("Drag to add or shape a point · double-click to remove")
                 .font(.system(size: AppTheme.FontSize.xxs))
                 .foregroundStyle(AppTheme.Text.mutedColor)
         }
@@ -143,16 +127,6 @@ struct CurveEditorView: View {
         return path
     }
 
-    private func handleTap(index: Int) {
-        let now = Date()
-        if let last = lastTap, last.index == index, now.timeIntervalSince(last.time) < 0.4 {
-            removePoint(at: index)
-            lastTap = nil
-        } else {
-            lastTap = (index, now)
-        }
-    }
-
     // MARK: - Points
 
     private var channelPoints: [CurvePoint] {
@@ -168,6 +142,9 @@ struct CurveEditorView: View {
         (channelPoints.isEmpty ? GradeCurve.identityPoints : channelPoints).sorted { $0.x < $1.x }
     }
 
+    /// Points to draw — the live in-flight drag if any, else the committed curve.
+    private var activePoints: [CurvePoint] { liveDrag?.points ?? sortedPoints }
+
     private func point(_ p: CurvePoint, _ size: CGSize) -> CGPoint {
         CGPoint(x: p.x * size.width, y: (1 - p.y) * size.height)
     }
@@ -177,30 +154,55 @@ struct CurveEditorView: View {
                    y: min(1, max(0, 1 - location.y / size.height)))
     }
 
-    private func drag(index: Int, to location: CGPoint, size: CGSize, commit: Bool) {
+    /// One gesture: grab the nearest point (or drop a new one) at press, then drag it.
+    private func curveDrag(_ size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 3)
+            .onChanged { v in
+                var d = liveDrag ?? grab(at: v.startLocation, size)
+                d.points = moved(d.points, d.index, to: v.location, size)
+                liveDrag = d
+                emit(d.points, commit: false)
+            }
+            .onEnded { v in
+                if let d = liveDrag { emit(moved(d.points, d.index, to: v.location, size), commit: true) }
+                liveDrag = nil
+            }
+    }
+
+    private func grab(at location: CGPoint, _ size: CGSize) -> (points: [CurvePoint], index: Int) {
         var pts = sortedPoints
-        let v = value(at: location, size)
-        let isEndpoint = index == 0 || index == pts.count - 1
-        pts[index].y = v.y
-        if !isEndpoint {
-            let lo = pts[index - 1].x + 0.001
-            let hi = pts[index + 1].x - 0.001
-            pts[index].x = min(hi, max(lo, v.x))
+        if let i = nearestIndex(to: location, in: pts, size) { return (pts, i) }
+        let np = value(at: location, size)
+        pts.append(np)
+        pts.sort { $0.x < $1.x }
+        return (pts, pts.firstIndex { $0.x == np.x && $0.y == np.y } ?? 0)
+    }
+
+    private func nearestIndex(to location: CGPoint, in pts: [CurvePoint], _ size: CGSize) -> Int? {
+        var best: (Int, CGFloat)?
+        for (i, p) in pts.enumerated() {
+            let sp = point(p, size)
+            let dist = hypot(sp.x - location.x, sp.y - location.y)
+            if dist <= AppTheme.Curve.pointHitDiameter / 2, best == nil || dist < best!.1 { best = (i, dist) }
         }
-        emit(pts, commit: commit)
+        return best?.0
     }
 
-    private func addPoint(at location: CGPoint, size: CGSize) {
-        var pts = sortedPoints
-        pts.append(value(at: location, size))
-        emit(pts.sorted { $0.x < $1.x }, commit: true)
+    private func moved(_ points: [CurvePoint], _ index: Int, to location: CGPoint, _ size: CGSize) -> [CurvePoint] {
+        var pts = points
+        let v = value(at: location, size)
+        pts[index].y = v.y
+        if index != 0, index != pts.count - 1 {
+            pts[index].x = min(pts[index + 1].x - 0.001, max(pts[index - 1].x + 0.001, v.x))
+        }
+        return pts
     }
 
-    private func removePoint(at index: Int) {
-        var pts = sortedPoints
-        guard pts.count > 2, index > 0, index < pts.count - 1 else { return }
-        pts.remove(at: index)
-        emit(pts, commit: true)
+    private func removeNearest(to location: CGPoint, _ size: CGSize) {
+        let pts = sortedPoints
+        guard let i = nearestIndex(to: location, in: pts, size), pts.count > 2, i > 0, i < pts.count - 1 else { return }
+        var out = pts; out.remove(at: i)
+        emit(out, commit: true)
     }
 
     private func emit(_ pts: [CurvePoint], commit: Bool) {

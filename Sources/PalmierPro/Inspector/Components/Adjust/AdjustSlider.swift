@@ -33,9 +33,9 @@ struct AdjustSlider: View {
                     .position(x: thumbX, y: geo.size.height / 2)
             }
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) { onCommit(defaultValue) }
+            .onTapGesture(count: 2) { _ in onCommit(defaultValue) }
             .gesture(
-                DragGesture(minimumDistance: 3)
+                DragGesture(minimumDistance: 0)
                     .onChanged { onChanged(value(atX: $0.location.x, width: w)) }
                     .onEnded { onCommit(value(atX: $0.location.x, width: w)) }
             )
