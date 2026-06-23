@@ -74,26 +74,113 @@ extension InspectorView {
          "stylize.vignette", "stylize.glow"]
     }
 
+    private var basicEffectIds: Set<String> {
+        Set((toneControls + whiteBalanceControls + presenceControls).map(\.effectId))
+    }
+
+    private var effectsEffectIds: Set<String> {
+        Set((stylizeControls + motionBlurControls + glowControls).map(\.effectId))
+    }
+
     @ViewBuilder
     func effectsTabContent() -> some View {
         let clips = nonTextVisualClips
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-            capsuleTabBar(titles: AdjustTab.allCases.map(\.rawValue), selected: adjustSubTab.rawValue) { title in
-                if let tab = AdjustTab(rawValue: title) { adjustSubTab = tab }
+        VStack(alignment: .leading, spacing: 0) {
+            adjustSection(title: "Basic Correction", effectIds: basicEffectIds, clips: clips) {
+                adjustSubgroup(title: "Tone", controls: toneControls, clips: clips)
+                adjustSubgroup(title: "White Balance", controls: whiteBalanceControls, clips: clips)
+                adjustSubgroup(title: "Presence", controls: presenceControls, clips: clips)
             }
-            switch adjustSubTab {
-            case .basic:
-                adjustmentSection(title: "Tone", controls: toneControls, clips: clips)
-                adjustmentSection(title: "White Balance", controls: whiteBalanceControls, clips: clips)
-                adjustmentSection(title: "Presence", controls: presenceControls, clips: clips)
-            case .color:
-                curvesSection(clips: clips)
-                wheelsSection(clips: clips)
-                lutSection(clips: clips)
-            case .effects:
-                adjustmentSection(title: "Effects", controls: stylizeControls, clips: clips)
-                adjustmentSection(title: "Motion Blur", controls: motionBlurControls, clips: clips)
-                adjustmentSection(title: "Glow", controls: glowControls, clips: clips)
+            adjustSection(title: "Curves", effectIds: ["color.curves"], clips: clips) {
+                curvesContent(clips: clips)
+            }
+            adjustSection(title: "Color Wheels", effectIds: ["color.wheels"], clips: clips) {
+                wheelsContent(clips: clips)
+            }
+            adjustSection(title: "LUTs", effectIds: ["color.lut"], clips: clips) {
+                lutContent(clips: clips)
+            }
+            adjustSection(title: "Effects", effectIds: effectsEffectIds, clips: clips) {
+                adjustSubgroup(title: "Stylize", controls: stylizeControls, clips: clips)
+                adjustSubgroup(title: "Motion Blur", controls: motionBlurControls, clips: clips)
+                adjustSubgroup(title: "Glow", controls: glowControls, clips: clips)
+            }
+        }
+    }
+
+    // MARK: Section chrome
+
+    @ViewBuilder
+    private func adjustSection<Content: View>(
+        title: String,
+        effectIds: Set<String>,
+        clips: [Clip],
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let expanded = !collapsedAdjustSections.contains(title)
+        let hasEffects = anyAdjusted(effectIds, clips: clips)
+        let isOn = !hasEffects || sectionEnabled(effectIds, clips: clips)
+        VStack(spacing: 0) {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .frame(width: AppTheme.IconSize.xxs, alignment: .center)
+                sectionTitleLabel(title: title)
+                Spacer(minLength: AppTheme.Spacing.sm)
+                if hasEffects {
+                    resetButton(
+                        onReset: { resetEffects(effectIds, clips: clips, actionName: "Reset \(title)") },
+                        help: "Reset \(title.lowercased())"
+                    )
+                }
+                Toggle("", isOn: Binding(
+                    get: { isOn },
+                    set: { setSectionEnabled(effectIds, clips: clips, enabled: $0) }
+                ))
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+                .disabled(!hasEffects)
+                .help(hasEffects ? "Enable \(title.lowercased())" : "No adjustments yet")
+            }
+            .padding(.horizontal, AppTheme.Spacing.lg)
+            .padding(.vertical, AppTheme.Spacing.smMd)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AppTheme.Background.raisedColor)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if expanded { collapsedAdjustSections.insert(title) }
+                else { collapsedAdjustSections.remove(title) }
+            }
+            .overlay(alignment: .bottom) {
+                if expanded { sectionDivider }
+            }
+            if expanded {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                    content()
+                }
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.vertical, AppTheme.Spacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .overlay(alignment: .bottom) { sectionDivider }
+    }
+
+    private var sectionDivider: some View {
+        Rectangle()
+            .fill(AppTheme.Border.primaryColor)
+            .frame(height: AppTheme.BorderWidth.hairline)
+    }
+
+    @ViewBuilder
+    private func adjustSubgroup(title: String, controls: [EffectControl], clips: [Clip]) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            sectionTitleLabel(title: title)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                ForEach(controls, id: \.self) { control in
+                    adjustmentRow(control, clips: clips)
+                }
             }
         }
     }
@@ -101,25 +188,12 @@ extension InspectorView {
     // MARK: Curves
 
     @ViewBuilder
-    private func curvesSection(clips: [Clip]) -> some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                sectionTitleLabel(title: "Curves")
-                Spacer()
-                if anyAdjusted(["color.curves"], clips: clips) {
-                    resetButton(
-                        onReset: { setCurve(GradeCurve(), clips: clips, commit: true, action: "Reset Curves") },
-                        help: "Reset curves"
-                    )
-                }
-            }
-            CurveEditorView(
-                curve: curve(in: clips.first?.effects ?? []),
-                onChange: { setCurveChannel($0, points: $1, clips: clips, commit: false, action: "Edit Curves") },
-                onCommit: { setCurveChannel($0, points: $1, clips: clips, commit: true, action: "Edit Curves") }
-            )
-            .padding(.leading, sectionContentIndent)
-        }
+    private func curvesContent(clips: [Clip]) -> some View {
+        CurveEditorView(
+            curve: curve(in: clips.first?.effects ?? []),
+            onChange: { setCurveChannel($0, points: $1, clips: clips, commit: false, action: "Edit Curves") },
+            onCommit: { setCurveChannel($0, points: $1, clips: clips, commit: true, action: "Edit Curves") }
+        )
     }
 
     private func curve(in effects: [Effect]) -> GradeCurve {
@@ -152,18 +226,6 @@ extension InspectorView {
         }
     }
 
-    /// Upsert the curves effect in place (stable id), pruning it when the curve is identity.
-    private func setCurve(_ curve: GradeCurve, clips: [Clip], commit: Bool, action: String) {
-        let mutate: (inout [Effect]) -> Void = { [self] effects in
-            upsertCurve(curve, in: &effects)
-        }
-        if commit {
-            commitEffects(clips, actionName: action, mutate)
-        } else {
-            applyEffects(clips, mutate)
-        }
-    }
-
     private func upsertCurve(_ curve: GradeCurve, in effects: inout [Effect]) {
         let existing = effects.firstIndex { $0.type == "color.curves" }
         guard !curve.isIdentity, let json = curve.encoded() else {
@@ -182,30 +244,13 @@ extension InspectorView {
     // MARK: Color wheels
 
     @ViewBuilder
-    private func wheelsSection(clips: [Clip]) -> some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                sectionTitleLabel(title: "Color Wheels")
-                Spacer()
-                if anyAdjusted(["color.wheels"], clips: clips) {
-                    HoldToPreviewButton(
-                        onPress: { previewSection(["color.wheels"], clips: clips, enabled: false) },
-                        onRelease: { previewSection(["color.wheels"], clips: clips, enabled: true) }
-                    )
-                    resetButton(
-                        onReset: { resetEffects(["color.wheels"], clips: clips, actionName: "Reset Color Wheels") },
-                        help: "Reset color wheels"
-                    )
-                }
-            }
-            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
-                wheelControl("Lift", prefix: "lift", clips: clips)
-                wheelControl("Gamma", prefix: "gamma", clips: clips)
-                wheelControl("Gain", prefix: "gain", clips: clips)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.leading, sectionContentIndent)
+    private func wheelsContent(clips: [Clip]) -> some View {
+        HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+            wheelControl("Lift", prefix: "lift", clips: clips)
+            wheelControl("Gamma", prefix: "gamma", clips: clips)
+            wheelControl("Gain", prefix: "gain", clips: clips)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private func wheelControl(_ title: String, prefix: String, clips: [Clip]) -> some View {
@@ -249,28 +294,11 @@ extension InspectorView {
     // MARK: LUT
 
     @ViewBuilder
-    private func lutSection(clips: [Clip]) -> some View {
+    private func lutContent(clips: [Clip]) -> some View {
         let path = lutPath(in: clips)
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                sectionTitleLabel(title: "LUT")
-                Spacer()
-                if path != nil {
-                    HoldToPreviewButton(
-                        onPress: { previewSection(["color.lut"], clips: clips, enabled: false) },
-                        onRelease: { previewSection(["color.lut"], clips: clips, enabled: true) }
-                    )
-                    resetButton(
-                        onReset: { clearLUT(clips: clips) },
-                        help: "Remove LUT"
-                    )
-                }
-            }
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                lutFileRow(path: path, clips: clips)
-                if path != nil { lutIntensityRow(clips: clips) }
-            }
-            .padding(.leading, sectionContentIndent)
+            lutFileRow(path: path, clips: clips)
+            if path != nil { lutIntensityRow(clips: clips) }
         }
     }
 
@@ -364,12 +392,6 @@ extension InspectorView {
         }
     }
 
-    private func clearLUT(clips: [Clip]) {
-        commitEffects(clips, actionName: "Remove LUT") { effects in
-            effects.removeAll { $0.type == "color.lut" }
-        }
-    }
-
     private func setLUTIntensity(_ value: Double, clips: [Clip], commit: Bool) {
         let mutate: (inout [Effect]) -> Void = { effects in
             guard let i = effects.firstIndex(where: { $0.type == "color.lut" }) else { return }
@@ -382,49 +404,7 @@ extension InspectorView {
         }
     }
 
-    // MARK: Always-on adjustment sections (Color, Effects)
-
-    @ViewBuilder
-    private func adjustmentSection(title: String, controls: [EffectControl], clips: [Clip]) -> some View {
-        let ids = Set(controls.map(\.effectId))
-        let expanded = !collapsedAdjustSections.contains(title)
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                Button {
-                    if expanded { collapsedAdjustSections.insert(title) }
-                    else { collapsedAdjustSections.remove(title) }
-                } label: {
-                    HStack(spacing: AppTheme.Spacing.xs) {
-                        sectionTitleLabel(title: title)
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: AppTheme.FontSize.xxs))
-                            .foregroundStyle(AppTheme.Text.mutedColor)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                Spacer()
-                if anyAdjusted(ids, clips: clips) {
-                    HoldToPreviewButton(
-                        onPress: { previewSection(ids, clips: clips, enabled: false) },
-                        onRelease: { previewSection(ids, clips: clips, enabled: true) }
-                    )
-                    resetButton(
-                        onReset: { resetEffects(ids, clips: clips, actionName: "Reset \(title)") },
-                        help: "Reset \(title.lowercased())"
-                    )
-                }
-            }
-            if expanded {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                    ForEach(controls, id: \.self) { control in
-                        adjustmentRow(control, clips: clips)
-                    }
-                }
-                .padding(.leading, sectionContentIndent)
-            }
-        }
-    }
+    // MARK: Adjustment rows
 
     @ViewBuilder
     private func adjustmentRow(_ control: EffectControl, clips: [Clip]) -> some View {
@@ -512,10 +492,12 @@ extension InspectorView {
         }
     }
 
-    /// Live preview of a section toggled off/on. Both go through the cheap
-    /// refresh-visuals path (no full composition rebuild), so the release doesn't flicker.
-    private func previewSection(_ ids: Set<String>, clips: [Clip], enabled: Bool) {
-        applyEffects(clips) { effects in
+    private func sectionEnabled(_ ids: Set<String>, clips: [Clip]) -> Bool {
+        !clips.contains { ($0.effects ?? []).contains { ids.contains($0.type) && !$0.enabled } }
+    }
+
+    private func setSectionEnabled(_ ids: Set<String>, clips: [Clip], enabled: Bool) {
+        commitEffects(clips, actionName: enabled ? "Enable Section" : "Disable Section") { effects in
             for i in effects.indices where ids.contains(effects[i].type) {
                 effects[i].enabled = enabled
             }

@@ -12,22 +12,15 @@ struct InspectorView: View {
         case ai = "AI Edit"
     }
 
-    enum AdjustTab: String, CaseIterable, Hashable {
-        case basic = "Basic"
-        case color = "Color"
-        case effects = "Effects"
-    }
-
     enum AssetTab: String, Hashable {
         case details = "Details"
         case ai = "AI Edit"
     }
 
     @State private var preferredTab: ClipTab = .video
-    @State var adjustSubTab: AdjustTab = .basic
     @State private var preferredAssetTab: AssetTab = .details
     @State private var transformExpanded = true
-    @State var collapsedAdjustSections: Set<String> = ["Motion Blur", "Glow"]
+    @State var collapsedAdjustSections: Set<String> = ["Curves", "Color Wheels", "LUTs", "Effects"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -207,6 +200,8 @@ struct InspectorView: View {
             Group {
                 if activeTab == .ai, let asset = resolvedClipAsset {
                     AIEditTab(asset: asset, clipId: selectedVisualClip?.id)
+                } else if activeTab == .effects {
+                    ScrollView { effectsTabContent() }
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
@@ -215,11 +210,9 @@ struct InspectorView: View {
                                 if let v = selectedVisualClip, v.mediaType == .text { TextTab(clip: v) }
                             case .video:
                                 videoTabContent()
-                            case .effects:
-                                effectsTabContent()
                             case .audio:
                                 audioTabContent()
-                            case .ai, .none:
+                            case .effects, .ai, .none:
                                 EmptyView()
                             }
                         }
@@ -280,29 +273,6 @@ struct InspectorView: View {
                 Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.thin)
             }
         }
-    }
-
-    /// Capsule segmented control — used for the Adjust sub-tabs.
-    func capsuleTabBar(titles: [String], selected: String?, onSelect: @escaping (String) -> Void) -> some View {
-        HStack(spacing: 0) {
-            ForEach(titles, id: \.self) { title in
-                let isActive = selected == title
-                Button { onSelect(title) } label: {
-                    Text(title)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: isActive ? .semibold : .regular))
-                        .foregroundStyle(isActive ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, AppTheme.Spacing.xs)
-                        .background {
-                            if isActive { Capsule().fill(AppTheme.Background.prominentColor) }
-                        }
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(AppTheme.Spacing.xxs)
-        .background(Capsule().fill(AppTheme.Background.surfaceColor))
     }
 
     @ViewBuilder
