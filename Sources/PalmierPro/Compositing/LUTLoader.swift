@@ -1,5 +1,15 @@
 import Foundation
 
+enum LUTStoreError: LocalizedError {
+    case noFile(String), invalid(String)
+    var errorDescription: String? {
+        switch self {
+        case .noFile(let path): "No file at path: \(path)"
+        case .invalid(let name): "Not a valid .cube 3D LUT: \(name)"
+        }
+    }
+}
+
 /// Parses .cube 3D LUT files into CIColorCube-ready RGBA float data.
 /// Cached by path + mtime, like AlphaVideoNormalizer's tag scheme.
 enum LUTLoader {
@@ -7,6 +17,23 @@ enum LUTLoader {
     struct CubeLUT {
         let dimension: Int
         let data: Data
+    }
+
+    /// Validates a .cube file and copies it into the project's LUT storage so it survives
+    /// saves and moves (project packages drop unknown files). Returns the stored path.
+    /// Shared by the agent (apply_color) and the inspector's LUT picker.
+    static func store(path: String, projectId: String?) throws -> String {
+        let sourceURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else { throw LUTStoreError.noFile(sourceURL.path) }
+        guard load(path: sourceURL.path) != nil else { throw LUTStoreError.invalid(sourceURL.lastPathComponent) }
+        let lutDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("PalmierPro/luts/\(projectId ?? "default")", isDirectory: true)
+        try FileManager.default.createDirectory(at: lutDir, withIntermediateDirectories: true)
+        let dest = lutDir.appendingPathComponent(sourceURL.lastPathComponent)
+        if sourceURL.standardizedFileURL == dest.standardizedFileURL { return dest.path }   // already stored
+        if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
+        try FileManager.default.copyItem(at: sourceURL, to: dest)
+        return dest.path
     }
 
     private static let lock = NSLock()

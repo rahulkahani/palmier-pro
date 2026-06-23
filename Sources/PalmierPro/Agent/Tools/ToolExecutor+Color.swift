@@ -81,22 +81,9 @@ extension ToolExecutor {
         return .ok("Graded \(input.clipIds.count) clip\(input.clipIds.count == 1 ? "" : "s") (\(reset ? "reset" : "merged")). Verify with inspect_timeline.")
     }
 
-    /// Validates a .cube file and copies it into the project's LUT storage; returns the stored path.
     private func copyLUTIntoProject(_ path: String, editor: EditorViewModel) throws -> String {
-        let sourceURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-            throw ToolError("No file at path: \(sourceURL.path)")
-        }
-        guard LUTLoader.load(path: sourceURL.path) != nil else {
-            throw ToolError("Not a valid .cube 3D LUT: \(sourceURL.lastPathComponent)")
-        }
-        let lutDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PalmierPro/luts/\(editor.projectId ?? "default")", isDirectory: true)
-        try FileManager.default.createDirectory(at: lutDir, withIntermediateDirectories: true)
-        let dest = lutDir.appendingPathComponent(sourceURL.lastPathComponent)
-        if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
-        try FileManager.default.copyItem(at: sourceURL, to: dest)
-        return dest.path
+        do { return try LUTLoader.store(path: path, projectId: editor.projectId) }
+        catch let e as LUTStoreError { throw ToolError(e.errorDescription ?? "Invalid LUT.") }
     }
 
     fileprivate struct InspectColorInput: DecodableToolArgs {
