@@ -35,39 +35,6 @@ struct GradeCurve: Codable, Sendable, Equatable {
     func encoded() -> String? {
         (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) }
     }
-
-    /// RGBA float32 cube (red fastest) for `CIColorCube`; nil when identity. `master` is a luma curve.
-    func cubeData(dimension n: Int = 17) -> (dimension: Int, data: Data)? {
-        guard !isIdentity else { return nil }
-        func clamp(_ v: Double) -> Float { Float(min(1, max(0, v))) }
-        let hasMaster = !(master.isEmpty || master == Self.identityPoints)
-        var table = [Float]()
-        table.reserveCapacity(n * n * n * 4)
-        for b in 0..<n {
-            for g in 0..<n {
-                for r in 0..<n {
-                    var rf = Double(r) / Double(n - 1)
-                    var gf = Double(g) / Double(n - 1)
-                    var bf = Double(b) / Double(n - 1)
-                    if hasMaster {
-                        let y = 0.2126 * rf + 0.7152 * gf + 0.0722 * bf
-                        let yp = Self.eval(master, y)
-                        if y > 1e-5 {
-                            let f = yp / y
-                            rf *= f; gf *= f; bf *= f
-                        } else {
-                            rf = yp; gf = yp; bf = yp  // no chroma to preserve → neutral
-                        }
-                    }
-                    table.append(clamp(Self.eval(red, rf)))
-                    table.append(clamp(Self.eval(green, gf)))
-                    table.append(clamp(Self.eval(blue, bf)))
-                    table.append(1)
-                }
-            }
-        }
-        return (n, table.withUnsafeBytes { Data($0) })
-    }
 }
 
 /// Failable JSON init kept in an extension so the memberwise initializer survives.
@@ -79,17 +46,3 @@ extension GradeCurve {
     }
 }
 
-/// Caches compiled cubes by curve JSON so the 17³ table builds once per curve, not per frame.
-enum CurveLUTCache {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var cache: [String: (Int, Data)] = [:]
-
-    static func cube(forJSON json: String) -> (dimension: Int, data: Data)? {
-        lock.lock(); defer { lock.unlock() }
-        if let hit = cache[json] { return hit }
-        guard let curve = GradeCurve(json: json), let cube = curve.cubeData() else { return nil }
-        if cache.count > 64 { cache.removeAll() }
-        cache[json] = cube
-        return cube
-    }
-}
