@@ -108,6 +108,7 @@ final class EditorViewModel {
     // MARK: - Media library (in-memory, rebuilt on project open)
 
     var mediaAssets: [MediaAsset] = []
+    @ObservationIgnored var importFinalizeTail: Task<Void, Never>?
     var offlineMediaRefs: Set<String> = []
     var unprocessableMediaRefs: Set<String> = []
     let mediaVisualCache = MediaVisualCache()

@@ -191,7 +191,7 @@ extension ToolExecutor {
             try FileManager.default.moveItem(at: tempURL, to: asset.url)
             asset.generationStatus = .none
             editor.importMediaAsset(asset, skipAppend: true)
-            await editor.finalizeImportedAsset(asset)
+            await editor.finalizeImportedAssetSerially(asset).value
         } catch {
             let message = (error as? ToolError)?.message ?? error.localizedDescription
             Log.project.error("import_media download failed url=\(remoteURL.absoluteString) error=\(message)")

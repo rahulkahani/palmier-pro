@@ -561,6 +561,20 @@ extension EditorViewModel {
         return context.makeImage()
     }
 
+    /// Serializes finalization so a batch of imports/generations completing at once
+    /// can't interleave their `mediaManifest.entries` / `mediaAssets` mutations across
+    /// `loadMetadata()`'s AVFoundation `await`s, which corrupts the @Observable arrays.
+    @discardableResult
+    func finalizeImportedAssetSerially(_ asset: MediaAsset) -> Task<Void, Never> {
+        let prior = importFinalizeTail
+        let task = Task { @MainActor [weak self] in
+            await prior?.value
+            await self?.finalizeImportedAsset(asset)
+        }
+        importFinalizeTail = task
+        return task
+    }
+
     func finalizeImportedAsset(_ asset: MediaAsset) async {
         Log.project.notice(
             "media finalize start asset=\(asset.id.prefix(8)) type=\(asset.type.rawValue)",

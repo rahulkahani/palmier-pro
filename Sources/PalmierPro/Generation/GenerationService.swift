@@ -206,7 +206,7 @@ final class GenerationService {
             asset.generationStatus = .none
             editor.importMediaAsset(asset, skipAppend: true)
             editor.appendGenerationLog(for: asset)
-            await editor.finalizeImportedAsset(asset)
+            await editor.finalizeImportedAssetSerially(asset).value
             return true
         } catch {
             let message = error.localizedDescription
