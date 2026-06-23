@@ -26,6 +26,9 @@ enum ToolName: String, CaseIterable, Sendable {
     case getTranscript = "get_transcript"
     case inspectTimeline = "inspect_timeline"
     case searchMedia = "search_media"
+    case setColorGrade = "set_color_grade"
+    case applyLut = "apply_lut"
+    case inspectColor = "inspect_color"
     case listFolders = "list_folders"
     case createFolder = "create_folder"
     case moveToFolder = "move_to_folder"
@@ -582,6 +585,68 @@ enum ToolDefinitions {
             inputSchema: objectSchema(
                 properties: [
                     "type": ["type": "string", "enum": ["video", "image", "audio", "upscale"], "description": "Filter by type. Omit to list all models."],
+                ]
+            )
+        ),
+        AgentTool(
+            name: .applyLut,
+            description: "Apply an existing .cube 3D LUT file to video/image clips (e.g. a film-look LUT pack). Pass the path to a real .cube file — the agent does not author LUT data. The LUT is copied into the project's storage so it survives saves. Applies on top of any primary grade (replaces only a prior LUT); set intensity to blend it back. Undoable. Verify with inspect_timeline.",
+            inputSchema: objectSchema(
+                properties: [
+                    "clipIds": ["type": "array", "items": ["type": "string"], "description": "Clip ids from get_timeline."],
+                    "path": ["type": "string", "description": "Absolute path to a .cube 3D LUT file (~ is expanded)."],
+                    "strength": ["type": "number", "description": "0–1 LUT intensity/blend. Defaults to 1.0."],
+                ],
+                required: ["clipIds", "path"]
+            )
+        ),
+        AgentTool(
+            name: .setColorGrade,
+            description: "Author/refine a color grade on video/image clips with named primary controls — the colorist path. MERGES with the clip's current grade: only the params you pass change, the rest are preserved, so you can nudge one knob at a time (pass reset:true to start from neutral). Applies as live, editable color.* effects; non-color effects untouched. Iterate: set_color_grade → inspect_color(clipId, reference) → read the gap → adjust → repeat. Undoable. All knobs optional. Color WHEELS use HUE (0–360°, standard) + AMOUNT per tonal zone — to push shadows teal, set shadowsHue 180 and shadowsAmount ~0.15. CURVES (master + per-channel R/G/B) give precise tone shaping — per-channel curves are tone-selective (e.g. pull the blue curve down in the highlights to tame a bright sky).",
+            inputSchema: objectSchema(
+                properties: [
+                    "clipIds": ["type": "array", "items": ["type": "string"], "description": "Clip ids from get_timeline."],
+                    "reset": ["type": "boolean", "description": "Start from neutral instead of merging onto the clip's current grade. Default false."],
+                    "exposure": ["type": "number", "description": "-3…3 EV. Overall brightness in linear light."],
+                    "contrast": ["type": "number", "description": "0.5…1.5 (1 = neutral)."],
+                    "saturation": ["type": "number", "description": "0…2 (1 = neutral; <1 mutes)."],
+                    "vibrance": ["type": "number", "description": "-1…1 (protects skin tones)."],
+                    "temperature": ["type": "number", "description": "2000…11000 K. HIGHER = WARMER, lower = cooler/bluer (6500 = neutral)."],
+                    "tint": ["type": "number", "description": "-100…100. Positive = green, negative = magenta."],
+                    "highlights": ["type": "number", "description": "-1…1. Recover (<0) or lift (>0) highlights."],
+                    "shadows": ["type": "number", "description": "-1…1. Lift (>0) or deepen (<0) shadows."],
+                    "blacks": ["type": "number", "description": "-1…1. Black point. Negative deepens, positive lifts (faded look)."],
+                    "whites": ["type": "number", "description": "-1…1. White point."],
+                    "shadowsHue": ["type": "number", "description": "Shadow color-push hue 0–360° (0 red, 30 orange, 60 yellow, 120 green, 180 cyan, 240 blue, 300 magenta). Use with shadowsAmount."],
+                    "shadowsAmount": ["type": "number", "description": "0…1 strength of the shadow color push (0 = neutral)."],
+                    "shadowsLum": ["type": "number", "description": "-0.5…0.5 shadow lift (brightness)."],
+                    "midsHue": ["type": "number", "description": "Midtone color-push hue 0–360° (see shadowsHue). Use with midsAmount."],
+                    "midsAmount": ["type": "number", "description": "0…1 strength of the midtone color push."],
+                    "midsGamma": ["type": "number", "description": "0.5…2 midtone brightness (gamma; 1 = neutral)."],
+                    "highsHue": ["type": "number", "description": "Highlight color-push hue 0–360° (see shadowsHue). Use with highsAmount."],
+                    "highsAmount": ["type": "number", "description": "0…1 strength of the highlight color push."],
+                    "highsGain": ["type": "number", "description": "0.5…1.5 highlight brightness (gain; 1 = neutral)."],
+                    "masterCurve": ["type": "array", "items": ["type": "array", "items": ["type": "number"]],
+                                    "description": "Luma tone curve as [x,y] control points in 0–1 (input→output), preserves chroma. E.g. [[0,0.06],[1,0.95]] = lifted/faded film toe."],
+                    "redCurve": ["type": "array", "items": ["type": "array", "items": ["type": "number"]],
+                                 "description": "Red-channel tone curve, [x,y] points 0–1."],
+                    "greenCurve": ["type": "array", "items": ["type": "array", "items": ["type": "number"]],
+                                   "description": "Green-channel tone curve, [x,y] points 0–1."],
+                    "blueCurve": ["type": "array", "items": ["type": "array", "items": ["type": "number"]],
+                                  "description": "Blue-channel tone curve, [x,y] points 0–1. Tone-selective: e.g. [[0,0],[0.7,0.7],[1,0.85]] pulls blue only in the highlights (tames a sky) and leaves shadows."],
+                ],
+                required: ["clipIds"]
+            )
+        ),
+        AgentTool(
+            name: .inspectColor,
+            description: "Measure color scopes of a timeline clip's current graded look (clipId) OR a raw media asset (mediaRef) — black/white points, % clipping, mean & per-channel levels, shadow/mid/highlight color tilt, saturation, and warm-cool / green-magenta balance — and return the rendered frame too. Use this to grade by the numbers instead of eyeballing, or to measure footage/references before grading. clipId applies the clip's effects (graded look); mediaRef measures the raw asset. Pass a reference image/video id to also measure it and get the subject−reference GAP plus hints that map onto set_color_grade knobs. The loop: set_color_grade → inspect_color(clipId, reference) → read the gap → adjust → repeat until the gap is small.",
+            inputSchema: objectSchema(
+                properties: [
+                    "clipId": ["type": "string", "description": "Timeline clip to measure — returns its current GRADED look (effects applied). Provide this or mediaRef."],
+                    "mediaRef": ["type": "string", "description": "Media asset id from get_media to measure RAW (no grade). Provide this or clipId."],
+                    "atFrame": ["type": "integer", "description": "Optional project frame to sample a clip. Defaults to the clip's midpoint. Ignored for mediaRef."],
+                    "reference": ["type": "string", "description": "Optional image/video asset id from get_media to compare against; returns its scopes + the subject−reference gap."],
                 ]
             )
         ),
