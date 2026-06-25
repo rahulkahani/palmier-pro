@@ -12,7 +12,7 @@ fileprivate struct PartialTextSpec {
 extension ToolExecutor {
     private static let addTextsAllowedKeys: Set<String> = [
         "trackIndex", "startFrame", "durationFrames", "content",
-        "transform", "fontName", "fontSize", "color", "alignment",
+        "transform", "fontName", "fontSize", "color", "backgroundColor", "backgroundEnabled", "alignment",
     ]
 
     private func parseAddTextTransform(
@@ -80,6 +80,11 @@ extension ToolExecutor {
             if let f = entry.string("fontName") { style.fontName = f }
             if let s = entry.double("fontSize") { style.fontSize = s }
             if let c = try parseColorHex(entry.string("color"), path: path) { style.color = c }
+            if let bg = try parseColorHex(entry.string("backgroundColor"), path: path) {
+                style.background.color = bg
+                style.background.enabled = true
+            }
+            if let e = entry.bool("backgroundEnabled") { style.background.enabled = e }
             if let a = try parseAlignment(entry.string("alignment"), path: path) { style.alignment = a }
 
             let transform = try parseAddTextTransform(

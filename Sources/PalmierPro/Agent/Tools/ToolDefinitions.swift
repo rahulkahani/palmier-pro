@@ -218,7 +218,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .setClipProperties,
-            description: "Apply the same property values to one or more clips in a single undoable action. Pass any combination of durationFrames, trimStartFrame, trimEndFrame, speed, volume, opacity, transform, or — for text clips only — content, fontName, fontSize, color, alignment. All values are applied to every clip in clipIds; for per-clip differences, make separate calls. trimStartFrame/trimEndFrame are offsets from the source media, not the timeline. speed 1.0 is normal, <1.0 slows (clip gets longer on the timeline), >1.0 speeds up. volume and opacity are 0.0–1.0. transform uses 0–1 normalized canvas coords, partial merge (pass only centerY to reposition vertically); flipHorizontal/flipVertical mirror the clip across the corresponding axis (no effect on text clips). When a text clip's content or font changes without an explicit transform, the bounding box auto-refits. Text-only fields with any non-text clip in clipIds are rejected.\n\nFor moves and start-frame changes, use move_clips. For animated values (keyframes), use set_keyframes — setting volume or opacity here clears any existing keyframe track on that property.\n\nTiming changes (durationFrames, trimStartFrame, trimEndFrame, speed) on a linked clip carry over to its linked partner so audio/video stay in sync — same as the timeline UI. Per-clip fields (volume, opacity, transform, text*) don't propagate. trim and speed are skipped for text partners.",
+            description: "Apply the same property values to one or more clips in a single undoable action. Pass any combination of durationFrames, trimStartFrame, trimEndFrame, speed, volume, opacity, transform, or — for text clips only — content, fontName, fontSize, color, backgroundColor, backgroundEnabled, alignment. All values are applied to every clip in clipIds; for per-clip differences, make separate calls. trimStartFrame/trimEndFrame are offsets from the source media, not the timeline. speed 1.0 is normal, <1.0 slows (clip gets longer on the timeline), >1.0 speeds up. volume and opacity are 0.0–1.0. transform uses 0–1 normalized canvas coords, partial merge (pass only centerY to reposition vertically); flipHorizontal/flipVertical mirror the clip across the corresponding axis (no effect on text clips). When a text clip's content or font changes without an explicit transform, the bounding box auto-refits. Text-only fields with any non-text clip in clipIds are rejected.\n\nFor moves and start-frame changes, use move_clips. For animated values (keyframes), use set_keyframes — setting volume or opacity here clears any existing keyframe track on that property.\n\nTiming changes (durationFrames, trimStartFrame, trimEndFrame, speed) on a linked clip carry over to its linked partner so audio/video stay in sync — same as the timeline UI. Per-clip fields (volume, opacity, transform, text*) don't propagate. trim and speed are skipped for text partners.",
             inputSchema: objectSchema(
                 properties: [
                     "clipIds": [
@@ -247,7 +247,9 @@ enum ToolDefinitions {
                     "content": ["type": "string", "description": "Text clips only. New text content."],
                     "fontName": ["type": "string", "description": "Text clips only. Font PostScript or family name."],
                     "fontSize": ["type": "number", "description": "Text clips only. Font size in canvas points."],
-                    "color": ["type": "string", "description": "Text clips only. Hex '#RRGGBB' or '#RRGGBBAA'."],
+                    "color": ["type": "string", "description": "Text clips only. Text (foreground) color, hex '#RRGGBB' or '#RRGGBBAA'."],
+                    "backgroundColor": ["type": "string", "description": "Text clips only. Background box fill color behind the text, hex '#RRGGBB' or '#RRGGBBAA' (use the AA byte for a translucent box, e.g. '#00000099'). Setting it turns the background on. Pass backgroundEnabled:false to remove the box."],
+                    "backgroundEnabled": ["type": "boolean", "description": "Text clips only. Toggle the background box on or off without changing its color."],
                     "alignment": ["type": "string", "enum": ["left", "center", "right"], "description": "Text clips only."],
                 ],
                 required: ["clipIds"]
@@ -366,7 +368,9 @@ enum ToolDefinitions {
                                 ],
                                 "fontName": ["type": "string", "description": "Font PostScript or family name, e.g. 'Helvetica-Bold', 'Georgia-Bold'. Default 'Helvetica-Bold'. Falls back to bold system font if not found."],
                                 "fontSize": ["type": "number", "description": "Font size in canvas points (default 96). On a 1080p canvas ~50 is a caption, ~120 is a title."],
-                                "color": ["type": "string", "description": "Hex '#RRGGBB' or '#RRGGBBAA' (default '#FFFFFF')"],
+                                "color": ["type": "string", "description": "Text (foreground) color, hex '#RRGGBB' or '#RRGGBBAA' (default '#FFFFFF')"],
+                                "backgroundColor": ["type": "string", "description": "Optional background box fill color behind the text, hex '#RRGGBB' or '#RRGGBBAA' (use the AA byte for a translucent box, e.g. '#00000099'). Off by default; setting it turns the box on."],
+                                "backgroundEnabled": ["type": "boolean", "description": "Optional. Toggle the background box on or off explicitly (defaults on when backgroundColor is set, off otherwise)."],
                                 "alignment": ["type": "string", "enum": ["left", "center", "right"], "description": "Text alignment (default 'center')"],
                             ],
                             "required": ["startFrame", "durationFrames", "content"],
@@ -385,7 +389,9 @@ enum ToolDefinitions {
                     "language": ["type": "string", "description": "Optional BCP-47 language of the speech (e.g. 'es', 'ja', 'en-GB'). Defaults to the system language — set this when the footage is in another language, or transcription will be garbage."],
                     "fontName": ["type": "string", "description": "Optional font PostScript or family name (default 'Helvetica-Bold'). Falls back to bold system font if not found."],
                     "fontSize": ["type": "number", "description": "Optional font size in canvas points (default 48)."],
-                    "color": ["type": "string", "description": "Optional hex '#RRGGBB' or '#RRGGBBAA' (default white)."],
+                    "color": ["type": "string", "description": "Optional text (foreground) color, hex '#RRGGBB' or '#RRGGBBAA' (default white)."],
+                    "backgroundColor": ["type": "string", "description": "Optional background box fill color behind each caption, hex '#RRGGBB' or '#RRGGBBAA' (use the AA byte for a translucent box, e.g. '#00000099' for a subtle scrim). Off by default; setting it turns the box on — the common request for a black caption background."],
+                    "backgroundEnabled": ["type": "boolean", "description": "Optional. Toggle the background box on or off explicitly (defaults on when backgroundColor is set, off otherwise)."],
                     "centerX": ["type": "number", "description": "Optional horizontal center 0–1 (default 0.5)."],
                     "centerY": ["type": "number", "description": "Optional vertical center 0–1 (default 0.9, near the bottom)."],
                     "textCase": ["type": "string", "enum": ["auto", "upper", "lower"], "description": "Optional letter case (default auto)."],

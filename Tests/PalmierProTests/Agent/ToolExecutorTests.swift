@@ -973,6 +973,48 @@ struct ToolExecutorClipTests {
         #expect(result.isError)
     }
 
+    @Test func setClipPropertiesSetsTextBackgroundColor() async throws {
+        let h = ToolHarness()
+        _ = h.editor.insertTrack(at: 0, type: .video)
+        _ = await h.runRaw("add_texts", args: [
+            "entries": [["trackIndex": 0, "startFrame": 0, "durationFrames": 60, "content": "Hi"]]
+        ])
+        let textId = h.editor.timeline.tracks[0].clips[0].id
+        let result = await h.runRaw("set_clip_properties", args: [
+            "clipIds": [textId], "backgroundColor": "#000000",
+        ])
+        #expect(result.isError == false, "\(ToolHarness.textOf(result))")
+        let style = h.editor.timeline.tracks[0].clips[0].textStyle
+        #expect(style?.background.enabled == true)
+        #expect(style?.background.color == TextStyle.RGBA(r: 0, g: 0, b: 0, a: 1))
+    }
+
+    @Test func setClipPropertiesTogglesTextBackgroundOff() async throws {
+        let h = ToolHarness()
+        _ = h.editor.insertTrack(at: 0, type: .video)
+        _ = await h.runRaw("add_texts", args: [
+            "entries": [["trackIndex": 0, "startFrame": 0, "durationFrames": 60, "content": "Hi", "backgroundColor": "#FF0000"]]
+        ])
+        let textId = h.editor.timeline.tracks[0].clips[0].id
+        let result = await h.runRaw("set_clip_properties", args: [
+            "clipIds": [textId], "backgroundEnabled": false,
+        ])
+        #expect(result.isError == false, "\(ToolHarness.textOf(result))")
+        let style = h.editor.timeline.tracks[0].clips[0].textStyle
+        #expect(style?.background.enabled == false)
+        #expect(style?.background.color == TextStyle.RGBA(r: 1, g: 0, b: 0, a: 1))
+    }
+
+    @Test func setClipPropertiesRejectsBackgroundColorOnVideoClip() async throws {
+        let (h, asset) = await setupWithVideoTrack()
+        let clipId = await addedClip(in: h, asset: asset)
+        let result = await h.runRaw("set_clip_properties", args: [
+            "clipIds": [clipId], "backgroundColor": "#000000",
+        ])
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("backgroundColor"))
+    }
+
     @Test func setClipPropertiesRejectsNoProperties() async throws {
         let (h, asset) = await setupWithVideoTrack()
         let clipId = await addedClip(in: h, asset: asset)
@@ -1218,6 +1260,43 @@ struct ToolExecutorTextFolderTests {
         let clip = h.editor.timeline.tracks[0].clips[0]
         #expect(clip.textContent == "Caption")
         #expect(clip.textStyle?.fontSize == 48)
+    }
+
+    @Test func addTextsAppliesBackgroundColor() async throws {
+        let h = ToolHarness()
+        _ = h.editor.insertTrack(at: 0, type: .video)
+        let result = await h.runRaw("add_texts", args: [
+            "entries": [[
+                "trackIndex": 0,
+                "startFrame": 0,
+                "durationFrames": 60,
+                "content": "Lower third",
+                "backgroundColor": "#000000",
+            ]]
+        ])
+        #expect(result.isError == false, "\(ToolHarness.textOf(result))")
+        let style = h.editor.timeline.tracks[0].clips[0].textStyle
+        #expect(style?.background.enabled == true)
+        #expect(style?.background.color == TextStyle.RGBA(r: 0, g: 0, b: 0, a: 1))
+    }
+
+    @Test func addTextsBackgroundEnabledFalseOverridesColor() async throws {
+        let h = ToolHarness()
+        _ = h.editor.insertTrack(at: 0, type: .video)
+        let result = await h.runRaw("add_texts", args: [
+            "entries": [[
+                "trackIndex": 0,
+                "startFrame": 0,
+                "durationFrames": 60,
+                "content": "No box",
+                "backgroundColor": "#000000",
+                "backgroundEnabled": false,
+            ]]
+        ])
+        #expect(result.isError == false, "\(ToolHarness.textOf(result))")
+        let style = h.editor.timeline.tracks[0].clips[0].textStyle
+        #expect(style?.background.enabled == false)
+        #expect(style?.background.color == TextStyle.RGBA(r: 0, g: 0, b: 0, a: 1))
     }
 
     @Test func addTextsRejectsAudioTargetTrack() async throws {
