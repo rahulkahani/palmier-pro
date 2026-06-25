@@ -174,6 +174,8 @@ extension ToolExecutor {
             throw ToolError("Mixed trackIndex: \(omittedCount) of \(specs.count) entries omitted trackIndex. Either set it on every entry or omit it on every entry (to auto-create shared tracks).")
         }
 
+        let settingsNote = applySettingsIfNeededForAgent(editor, assets: specs.map(\.asset))
+
         let actionName = specs.count == 1 ? "Add Clip (Agent)" : "Add Clips (Agent)"
         let (createdTracks, summaries) = try withUndoGroup(editor, actionName: actionName) { () -> ([String], [String]) in
             var createdTracks: [String] = []
@@ -255,7 +257,8 @@ extension ToolExecutor {
         }
         editor.notifyTimelineChanged()
 
-        let prefix = createdTracks.isEmpty ? "" : "Created \(createdTracks.joined(separator: ", ")). "
+        var prefix = createdTracks.isEmpty ? "" : "Created \(createdTracks.joined(separator: ", ")). "
+        if let note = settingsNote { prefix = "\(note) \(prefix)" }
         return .ok("\(prefix)Added \(specs.count) clip\(specs.count == 1 ? "" : "s"): \(summaries.joined(separator: "; "))")
     }
 
@@ -297,6 +300,8 @@ extension ToolExecutor {
             specs.append(.init(asset: asset, durationFrames: duration, trimStartFrame: entry.trimStartFrame, trimEndFrame: entry.trimEndFrame))
         }
 
+        let settingsNote = applySettingsIfNeededForAgent(editor, assets: specs.map(\.asset))
+
         let totalPush = specs.reduce(0) { $0 + $1.durationFrames }
         let tracksBefore = editor.timeline.tracks.count
         let ids = editor.rippleInsertClips(specs: specs, trackIndex: input.trackIndex, atFrame: input.atFrame)
@@ -305,7 +310,8 @@ extension ToolExecutor {
         }
         let audioNote = editor.timeline.tracks.count > tracksBefore
             ? " Created an audio track (appended) for the linked audio." : ""
-        return .ok("Inserted \(specs.count) clip\(specs.count == 1 ? "" : "s") at frame \(input.atFrame) on track \(input.trackIndex), pushed later clips +\(totalPush)f: \(ids.joined(separator: ", ")).\(audioNote)")
+        let settingsPrefix = settingsNote.map { "\($0) " } ?? ""
+        return .ok("\(settingsPrefix)Inserted \(specs.count) clip\(specs.count == 1 ? "" : "s") at frame \(input.atFrame) on track \(input.trackIndex), pushed later clips +\(totalPush)f: \(ids.joined(separator: ", ")).\(audioNote)")
     }
 
     // MARK: remove_clips
