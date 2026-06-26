@@ -68,36 +68,28 @@ struct UpdateProjectBadge: View {
             Button {
                 updater.checkForUpdates(nil)
             } label: {
-                HStack(spacing: AppTheme.Spacing.xs) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .offset(y: -1)
-                    Text(badgeLabel)
-                }
-                .font(.system(size: AppTheme.FontSize.sm, weight: .semibold))
-                .foregroundStyle(AppTheme.Update.accent)
-                .lineLimit(1)
-                .padding(.horizontal, AppTheme.Spacing.sm)
-                .frame(height: AppTheme.IconSize.lg)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(AppTheme.Update.accent.opacity(AppTheme.Opacity.muted))
-                )
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(AppTheme.Update.accent.opacity(AppTheme.Opacity.moderate), lineWidth: AppTheme.BorderWidth.thin)
-                )
-                .help("Install update")
+                Label("Update", systemImage: "arrow.down.circle.fill")
+                    .font(.system(size: AppTheme.FontSize.sm, weight: .semibold))
+                    .foregroundStyle(AppTheme.Update.accent)
+                    .lineLimit(1)
+                    .padding(.horizontal, AppTheme.Spacing.smMd)
+                    .frame(height: AppTheme.IconSize.lg)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(AppTheme.Update.accent.opacity(AppTheme.Opacity.muted))
+                    )
             }
             .buttonStyle(.plain)
+            .help(helpText)
             .fixedSize(horizontal: true, vertical: false)
             .transition(.opacity.combined(with: .scale))
         }
     }
 
-    private var badgeLabel: String {
+    private var helpText: String {
         if let version = updater.updateVersion {
-            return "Update v\(version)"
+            return "Install update v\(version)"
         }
-        return "Update available"
+        return "Install update"
     }
 }
