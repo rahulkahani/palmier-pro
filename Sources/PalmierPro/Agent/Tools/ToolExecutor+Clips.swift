@@ -58,7 +58,8 @@ fileprivate struct SplitClipsInput: DecodableToolArgs {
 }
 
 fileprivate struct SetClipPropertiesInput: DecodableToolArgs {
-    let clipIds: [String]
+    let clipIds: [String]?
+    let captionGroupId: String?
     let durationFrames: Int?
     let trimStartFrame: Int?
     let trimEndFrame: Int?
@@ -71,13 +72,15 @@ fileprivate struct SetClipPropertiesInput: DecodableToolArgs {
     let fontSize: Double?
     let color: String?
     let alignment: String?
+    let animation: String?
+    let highlightColor: String?
 
     static let allowedKeys: Set<String> = [
-        "clipIds",
+        "clipIds", "captionGroupId",
         "durationFrames", "trimStartFrame", "trimEndFrame", "speed",
         "volume", "opacity",
         "transform",
-        "content", "fontName", "fontSize", "color", "alignment",
+        "content", "fontName", "fontSize", "color", "alignment", "animation", "highlightColor",
     ]
 
     var hasAnyProperty: Bool {
@@ -85,7 +88,7 @@ fileprivate struct SetClipPropertiesInput: DecodableToolArgs {
             || speed != nil || volume != nil || opacity != nil
             || transform != nil
             || content != nil || fontName != nil || fontSize != nil
-            || color != nil || alignment != nil
+            || color != nil || alignment != nil || animation != nil || highlightColor != nil
     }
 }
 
@@ -445,7 +448,16 @@ extension ToolExecutor {
 
     func setClipProperties(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let input: SetClipPropertiesInput = try decodeToolArgs(args, path: "set_clip_properties")
-        guard !input.clipIds.isEmpty else { throw ToolError("Missing or empty 'clipIds' array") }
+
+        // captionGroupId applies to every text clip in the group, plus any given clipIds.
+        var clipIds = input.clipIds ?? []
+        if let gid = input.captionGroupId {
+            let groupIds = editor.captionGroupTextClipIds(groupId: gid)
+            guard !groupIds.isEmpty else { throw ToolError("No caption clips found for captionGroupId: \(gid)") }
+            var seen = Set(clipIds)
+            for id in groupIds where seen.insert(id).inserted { clipIds.append(id) }
+        }
+        guard !clipIds.isEmpty else { throw ToolError("Provide a non-empty 'clipIds' array or a 'captionGroupId'") }
         guard input.hasAnyProperty else {
             throw ToolError("set_clip_properties needs at least one property to apply")
         }
@@ -469,19 +481,23 @@ extension ToolExecutor {
         }
         let color = try parseColorHex(input.color, path: "set_clip_properties")
         let alignment = try parseAlignment(input.alignment, path: "set_clip_properties")
+        let animation = try parseTextAnimation(preset: input.animation, highlightColor: input.highlightColor, path: "set_clip_properties")
+        let highlightOnly = input.animation == nil ? try parseColorHex(input.highlightColor, path: "set_clip_properties") : nil
 
         // Resolve clipIds + collect types so we can reject text-only fields on non-text clips.
         var clipTypes: [String: ClipType] = [:]
-        for id in input.clipIds {
+        for id in clipIds {
             guard let loc = editor.findClip(id: id) else { throw ToolError("Clip not found: \(id)") }
             clipTypes[id] = editor.timeline.tracks[loc.trackIndex].clips[loc.clipIndex].mediaType
         }
         let textOnlyUsed = [
-            input.content   != nil ? "content"   : nil,
-            input.fontName  != nil ? "fontName"  : nil,
-            input.fontSize  != nil ? "fontSize"  : nil,
-            input.color     != nil ? "color"     : nil,
-            input.alignment != nil ? "alignment" : nil,
+            input.content        != nil ? "content"        : nil,
+            input.fontName       != nil ? "fontName"       : nil,
+            input.fontSize       != nil ? "fontSize"       : nil,
+            input.color          != nil ? "color"          : nil,
+            input.alignment      != nil ? "alignment"      : nil,
+            input.animation      != nil ? "animation"      : nil,
+            input.highlightColor != nil ? "highlightColor" : nil,
         ].compactMap { $0 }
         if !textOnlyUsed.isEmpty {
             let nonText = clipTypes.filter { $0.value != .text }.map { $0.key }.sorted()
@@ -495,13 +511,13 @@ extension ToolExecutor {
         let propagatesTiming = input.durationFrames != nil || input.trimStartFrame != nil
             || input.trimEndFrame != nil || input.speed != nil
         let partners: Set<String> = propagatesTiming
-            ? editor.timingPropagationPartners(of: Set(input.clipIds))
+            ? editor.timingPropagationPartners(of: Set(clipIds))
             : []
 
-        let setActionName = input.clipIds.count == 1 ? "Set Clip Property (Agent)" : "Set Clip Properties (Agent)"
+        let setActionName = clipIds.count == 1 ? "Set Clip Property (Agent)" : "Set Clip Properties (Agent)"
         let summaries: [String] = withUndoGroup(editor, actionName: setActionName) {
             var summaries: [String] = []
-            for id in input.clipIds {
+            for id in clipIds {
                 let isText = clipTypes[id] == .text
                 let changed = Self.applyPropertyChanges(
                     durationFrames: input.durationFrames,
@@ -516,6 +532,8 @@ extension ToolExecutor {
                     fontSize: isText ? input.fontSize : nil,
                     color: isText ? color : nil,
                     alignment: isText ? alignment : nil,
+                    animation: (isText && input.animation != nil) ? .some(animation) : nil,
+                    highlight: isText ? highlightOnly : nil,
                     clipId: id,
                     editor: editor
                 )
@@ -534,7 +552,7 @@ extension ToolExecutor {
                     trimEndFrame:   partnerIsText ? nil : input.trimEndFrame,
                     speed:          partnerIsText ? nil : input.speed,
                     volume: nil, opacity: nil, transform: nil,
-                    content: nil, fontName: nil, fontSize: nil, color: nil, alignment: nil,
+                    content: nil, fontName: nil, fontSize: nil, color: nil, alignment: nil, animation: nil, highlight: nil,
                     clipId: partnerId,
                     editor: editor
                 )
@@ -543,7 +561,7 @@ extension ToolExecutor {
         }
 
         let linkedNote = partners.isEmpty ? "" : " (+\(partners.count) linked)"
-        return .ok("Updated \(input.clipIds.count) clip\(input.clipIds.count == 1 ? "" : "s")\(linkedNote): \(summaries.joined(separator: "; "))")
+        return .ok("Updated \(clipIds.count) clip\(clipIds.count == 1 ? "" : "s")\(linkedNote): \(summaries.joined(separator: "; "))")
     }
 
     fileprivate static func applyPropertyChanges(
@@ -559,6 +577,8 @@ extension ToolExecutor {
         fontSize: Double?,
         color: TextStyle.RGBA?,
         alignment: TextStyle.Alignment?,
+        animation: TextAnimation??,
+        highlight: TextStyle.RGBA?,
         clipId: String,
         editor: EditorViewModel
     ) -> [String] {
@@ -607,6 +627,16 @@ extension ToolExecutor {
                 if let c = color     { style.color = c; changed.append("color") }
                 if let a = alignment { style.alignment = a; changed.append("alignment") }
                 clip.textStyle = style
+            }
+            if case .some(let value) = animation {
+                clip.textAnimation = value
+                changed.append("animation")
+            }
+            if let hl = highlight {
+                var a = clip.textAnimation ?? TextAnimation()
+                a.highlight = hl
+                clip.textAnimation = a
+                changed.append("highlightColor")
             }
         }
         return changed

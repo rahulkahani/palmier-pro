@@ -3,7 +3,7 @@ import Foundation
 
 extension ToolExecutor {
     private static let addCaptionsAllowedKeys: Set<String> = [
-        "clipIds", "fontName", "fontSize", "color", "centerX", "centerY", "textCase", "censorProfanity", "language",
+        "clipIds", "fontName", "fontSize", "color", "centerX", "centerY", "textCase", "censorProfanity", "language", "animation", "highlightColor",
     ]
 
     func addCaptions(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
@@ -30,6 +30,8 @@ extension ToolExecutor {
             textCase = parsed
         }
 
+        let animation = try parseTextAnimation(preset: args.string("animation"), highlightColor: args.string("highlightColor"), path: "add_captions") ?? TextAnimation()
+
         let request = EditorViewModel.CaptionRequest(
             sourceClipIds: clipIds,
             autoDetect: clipIds.isEmpty,
@@ -37,11 +39,13 @@ extension ToolExecutor {
             center: center,
             textCase: textCase,
             censorProfanity: args.bool("censorProfanity") ?? false,
-            locale: locale
+            locale: locale,
+            animation: animation
         )
 
         let ids = try await editor.generateCaptions(for: request)
         guard !ids.isEmpty else { throw ToolError("No speech detected to caption.") }
-        return .ok("Added \(ids.count) caption\(ids.count == 1 ? "" : "s").")
+        let suffix = animation.isActive ? " (\(animation.preset.rawValue))" : ""
+        return .ok("Added \(ids.count) caption\(ids.count == 1 ? "" : "s")\(suffix).")
     }
 }

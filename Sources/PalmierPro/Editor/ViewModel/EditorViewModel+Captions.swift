@@ -55,9 +55,14 @@ extension EditorViewModel {
     /// caption track), or just the clip itself when it isn't part of a caption.
     func captionGroupTextClipIds(for clipId: String) -> [String] {
         guard let clip = clipFor(id: clipId), let group = clip.captionGroupId else { return [clipId] }
-        let ids = timeline.tracks.flatMap(\.clips)
-            .filter { $0.captionGroupId == group && $0.mediaType == .text }.map(\.id)
+        let ids = captionGroupTextClipIds(groupId: group)
         return ids.isEmpty ? [clipId] : ids
+    }
+
+    /// Text clip ids in a caption group, in timeline order. Empty if the group has no text clips.
+    func captionGroupTextClipIds(groupId: String) -> [String] {
+        timeline.tracks.flatMap(\.clips)
+            .filter { $0.captionGroupId == groupId && $0.mediaType == .text }.map(\.id)
     }
 
     func captionCanTranscribe(_ clip: Clip) -> Bool {

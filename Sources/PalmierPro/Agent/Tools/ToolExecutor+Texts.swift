@@ -7,13 +7,25 @@ fileprivate struct PartialTextSpec {
     let content: String
     let style: TextStyle
     let transform: Transform?
+    let animation: TextAnimation?
 }
 
 extension ToolExecutor {
     private static let addTextsAllowedKeys: Set<String> = [
         "trackIndex", "startFrame", "durationFrames", "content",
-        "transform", "fontName", "fontSize", "color", "alignment",
+        "transform", "fontName", "fontSize", "color", "alignment", "animation", "highlightColor",
     ]
+
+    /// Returns a TextAnimation for an agent 'animation' spec, or nil if 'off' or not set.
+    func parseTextAnimation(preset raw: String?, highlightColor: String?, path: String) throws -> TextAnimation? {
+        guard let raw, raw != "off" else { return nil }
+        guard let preset = TextAnimation.Preset(rawValue: raw), preset != .none else {
+            throw ToolError("\(path): animation must be one of off, fadeIn, popIn, slideUp, wordPop, wordReveal, highlightPop, karaokeFill")
+        }
+        var anim = TextAnimation(preset: preset)
+        if let hex = try parseColorHex(highlightColor, path: path) { anim.highlight = hex }
+        return anim
+    }
 
     private func parseAddTextTransform(
         _ tDict: [String: Any]?,
@@ -95,7 +107,8 @@ extension ToolExecutor {
                 durationFrames: durationFrames,
                 content: content,
                 style: style,
-                transform: transform
+                transform: transform,
+                animation: try parseTextAnimation(preset: entry.string("animation"), highlightColor: entry.string("highlightColor"), path: path)
             ))
         }
 
@@ -131,7 +144,8 @@ extension ToolExecutor {
                     durationFrames: p.durationFrames,
                     content: p.content,
                     style: p.style,
-                    transform: p.transform
+                    transform: p.transform,
+                    animation: p.animation
                 )
             }
 
