@@ -44,6 +44,20 @@ struct ApplyLayoutTests {
 
     // MARK: Placement
 
+    @Test func placementAdoptsLayoutSlotOrderForSettings() async throws {
+        // Unconfigured timeline: canvas follows the layout's canonical slot order, not input.slots order.
+        let h = ToolHarness()
+        videoAsset(h, id: "landscape", w: 1920, ht: 1080)
+        videoAsset(h, id: "portrait", w: 1080, ht: 1920)
+        let r = await h.runRaw("apply_layout", args: [
+            "layout": "side_by_side", "durationFrames": 60,
+            "slots": [["slot": "right", "mediaRef": "portrait"], ["slot": "left", "mediaRef": "landscape"]],
+        ])
+        #expect(r.isError == false)
+        #expect(h.editor.timeline.width == 1920)
+        #expect(h.editor.timeline.height == 1080)
+    }
+
     @Test func sideBySideFillsWithoutStretch() async throws {
         let h = ToolHarness() // 1920x1080
         videoAsset(h, id: "a"); videoAsset(h, id: "b")

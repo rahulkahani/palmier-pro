@@ -103,7 +103,10 @@ extension ToolExecutor {
                 }
                 assetBySlot[e.slot.id] = a
             }
-            settingsNote = applySettingsIfNeededForAgent(editor, assets: Array(assetBySlot.values))
+            settingsNote = applySettingsIfNeededForAgent(
+                editor,
+                assets: layout.slots.compactMap { assetBySlot[$0.id] }
+            )
         } else {
             // Layout shows every clip at once, so reject same-track overlaps (only the first renders)
             // and clips that never share a frame.
