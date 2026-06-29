@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-struct TextStyle: Codable, Sendable, Equatable {
+struct TextStyle: Codable, Sendable, Equatable, Hashable {
     var fontName: String = "Helvetica-Bold"
     var fontSize: Double = 96
     var fontScale: Double = 1.0
@@ -11,20 +11,20 @@ struct TextStyle: Codable, Sendable, Equatable {
     var background: Fill = Fill(enabled: false, color: RGBA(r: 0, g: 0, b: 0, a: 0.6))
     var border: Fill = Fill(enabled: false, color: RGBA(r: 0, g: 0, b: 0, a: 1))
 
-    enum Alignment: String, Codable, Sendable, CaseIterable {
+    enum Alignment: String, Codable, Sendable, CaseIterable, Hashable {
         case left
         case center
         case right
     }
 
-    struct RGBA: Codable, Sendable, Equatable {
+    struct RGBA: Codable, Sendable, Equatable, Hashable {
         var r: Double = 1
         var g: Double = 1
         var b: Double = 1
         var a: Double = 1
     }
 
-    struct Shadow: Codable, Sendable, Equatable {
+    struct Shadow: Codable, Sendable, Equatable, Hashable {
         var enabled: Bool = true
         /// Alpha doubles as opacity; layer.shadowOpacity stays at 1.
         var color: RGBA = RGBA(r: 0, g: 0, b: 0, a: 0.6)
@@ -35,7 +35,7 @@ struct TextStyle: Codable, Sendable, Equatable {
     }
 
     /// Toggleable solid color — used for the text box background and border.
-    struct Fill: Codable, Sendable, Equatable {
+    struct Fill: Codable, Sendable, Equatable, Hashable {
         var enabled: Bool = false
         var color: RGBA = RGBA()
     }

@@ -97,6 +97,8 @@ struct Clip: Codable, Sendable, Equatable, Identifiable {
     // Text clips only.
     var textContent: String?
     var textStyle: TextStyle?
+    var textAnimation: TextAnimation?
+    var wordTimings: [WordTiming]?
 
     // Keyframe tracks for each animatable property. Nil when no animation exists.
     var opacityTrack: KeyframeTrack<Double>?
@@ -113,7 +115,7 @@ struct Clip: Codable, Sendable, Equatable, Identifiable {
         case trimStartFrame, trimEndFrame, speed, volume
         case fadeInFrames, fadeOutFrames, fadeInInterpolation, fadeOutInterpolation
         case opacity, transform, crop
-        case linkGroupId, captionGroupId, textContent, textStyle
+        case linkGroupId, captionGroupId, textContent, textStyle, textAnimation, wordTimings
         case opacityTrack, positionTrack, scaleTrack, rotationTrack, cropTrack, volumeTrack
         case effects
     }
@@ -354,6 +356,8 @@ extension Clip {
             captionGroupId: try? c.decode(String.self, forKey: .captionGroupId),
             textContent: try? c.decode(String.self, forKey: .textContent),
             textStyle: try? c.decode(TextStyle.self, forKey: .textStyle),
+            textAnimation: try? c.decode(TextAnimation.self, forKey: .textAnimation),
+            wordTimings: try? c.decode([WordTiming].self, forKey: .wordTimings),
             opacityTrack: try? c.decode(KeyframeTrack<Double>.self, forKey: .opacityTrack),
             positionTrack: try? c.decode(KeyframeTrack<AnimPair>.self, forKey: .positionTrack),
             scaleTrack: try? c.decode(KeyframeTrack<AnimPair>.self, forKey: .scaleTrack),
@@ -365,7 +369,7 @@ extension Clip {
     }
 }
 
-struct Transform: Codable, Sendable, Equatable {
+struct Transform: Codable, Sendable, Equatable, Hashable {
     var centerX: Double = 0.5
     var centerY: Double = 0.5
     var width: Double = 1
