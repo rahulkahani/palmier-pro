@@ -8,6 +8,8 @@ struct CaptionTab: View {
     @State private var selectedTrackId: String?
     @State private var selectedClipTargets: [String] = []
     @State private var textCase: EditorViewModel.CaptionCase = .auto
+    @State private var animationPreset: TextAnimation.Preset = .none
+    @State private var animationHighlight: TextStyle.RGBA = TextAnimation.defaultHighlight
     @State private var censorProfanity = false
     @State private var locale: Locale?
     @State private var supportedLocales: [Locale] = []
@@ -57,6 +59,7 @@ struct CaptionTab: View {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
                         sourceSection
                         styleSection
+                        animationSection
                         placementSection
                     }
                     .padding(.horizontal, AppTheme.Spacing.lgXl)
@@ -101,6 +104,13 @@ struct CaptionTab: View {
                     }
                 } label: { menuValueLabel(locale.map(languageName) ?? "Auto") }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+            }
+            InspectorRow(icon: "exclamationmark.bubble", label: "Censor profanity") {
+                Toggle("", isOn: $censorProfanity)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
             }
         }
     }
@@ -199,13 +209,15 @@ struct CaptionTab: View {
                 }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
             }
-            InspectorRow(icon: "exclamationmark.bubble", label: "Censor profanity") {
-                Toggle("", isOn: $censorProfanity)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
+            InspectorRow(icon: "highlighter", label: "Highlight", labelHelp: "Active-word color for karaoke presets (Highlight, Karaoke Fill).") {
+                ColorField(displayColor: animationHighlight.swiftUIColor, onUserChange: { animationHighlight = TextStyle.RGBA($0) })
             }
+        }
+    }
+
+    private var animationSection: some View {
+        InspectorSection("Animation") {
+            CaptionPresetGallery(selection: $animationPreset, highlight: animationHighlight)
         }
     }
 
@@ -282,28 +294,12 @@ struct CaptionTab: View {
             AppTheme.Background.previewCanvasColor
             centerGuides
             GeometryReader { geo in
-                let canvasW = CGFloat(max(1, editor.timeline.width))
-                let canvasH = CGFloat(max(1, editor.timeline.height))
-                let natural = TextLayout.naturalSize(
-                    content: Self.previewText,
-                    style: style,
-                    maxWidth: canvasW * AppTheme.ComponentSize.captionPreviewMaxTextWidthRatio,
-                    canvasHeight: canvasH
+                CaptionAnimatedPreview(
+                    text: Self.previewText, style: style, center: center,
+                    preset: animationPreset, highlight: animationHighlight,
+                    canvas: CGSize(width: max(1, editor.timeline.width), height: max(1, editor.timeline.height)),
+                    size: geo.size
                 )
-                let scale = geo.size.height / TextLayout.referenceCanvasHeight
-                let boxWidth = natural.width / canvasW * geo.size.width
-                let boxHeight = natural.height / canvasH * geo.size.height
-                Text(Self.previewText)
-                    .font(Font(style.resolvedFont(size: CGFloat(style.fontSize * style.fontScale) * scale)))
-                    .foregroundStyle(style.color.swiftUIColor)
-                    .frame(width: boxWidth, height: boxHeight)
-                    .background(style.background.enabled ? style.background.color.swiftUIColor : Color.clear)
-                    .overlay {
-                        if style.border.enabled {
-                            Rectangle().stroke(style.border.color.swiftUIColor, lineWidth: AppTheme.BorderWidth.thin * scale)
-                        }
-                    }
-                    .position(x: geo.size.width * center.x, y: geo.size.height * center.y)
             }
         }
         .aspectRatio(aspect, contentMode: .fit)
@@ -394,7 +390,8 @@ struct CaptionTab: View {
         }
         let request = EditorViewModel.CaptionRequest(
             sourceClipIds: sourceIds, autoDetect: isAutoSource, style: style, center: center,
-            textCase: textCase, censorProfanity: censorProfanity, locale: locale
+            textCase: textCase, censorProfanity: censorProfanity, locale: locale,
+            animation: TextAnimation(preset: animationPreset, highlight: animationHighlight)
         )
         Task {
             isGenerating = true

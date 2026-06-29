@@ -5,7 +5,8 @@ struct InspectorView: View {
     @Environment(EditorViewModel.self) var editor
 
     enum ClipTab: String, Hashable {
-        case text = "Text"
+        case text = "Content"
+        case textAnimate = "Animate"
         case video = "Video"
         case effects = "Adjust"
         case audio = "Audio"
@@ -244,7 +245,7 @@ struct InspectorView: View {
         let isSingleText = isSingle && visuals.first?.mediaType == .text
 
         var tabs: [ClipTab] = []
-        if isSingleText { tabs.append(.text) }
+        if isSingleText { tabs.append(.text); tabs.append(.textAnimate) }
         if !nonText.isEmpty {
             tabs.append(.video)
             tabs.append(.effects)
@@ -299,6 +300,8 @@ struct InspectorView: View {
                             switch activeTab {
                             case .text:
                                 if let v = selectedVisualClip, v.mediaType == .text { TextTab(clip: v) }
+                            case .textAnimate:
+                                if let v = selectedVisualClip, v.mediaType == .text { TextAnimateTab(clip: v) }
                             case .video:
                                 videoTabContent()
                             case .audio:

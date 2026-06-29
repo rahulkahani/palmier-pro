@@ -223,3 +223,46 @@ struct TextTab: View {
         }
     }
 }
+
+struct TextAnimateTab: View {
+    let clip: Clip
+    @Environment(EditorViewModel.self) private var editor
+
+    private var targetIds: [String] { editor.captionGroupTextClipIds(for: clip.id) }
+
+    var body: some View {
+        let anim = clip.textAnimation ?? TextAnimation()
+        InspectorSection("Animation") {
+            CaptionPresetGallery(
+                selection: Binding(
+                    get: { anim.preset },
+                    set: { new in setAnim { $0.preset = new } }
+                ),
+                highlight: anim.highlight
+            )
+            if anim.preset.usesHighlight { highlightRow(anim) }
+        }
+    }
+
+    private func setAnim(_ modify: (inout TextAnimation) -> Void) {
+        var a = clip.textAnimation ?? TextAnimation()
+        modify(&a)
+        let value: TextAnimation? = a.preset == .none ? nil : a
+        editor.commitClipProperties(clipIds: targetIds) { $0.textAnimation = value }
+    }
+
+    private func highlightRow(_ anim: TextAnimation) -> some View {
+        InspectorRow(icon: "highlighter", label: "Highlight") {
+            ColorField(
+                displayColor: (anim.highlight ?? TextAnimation.defaultHighlight).swiftUIColor,
+                onUserChange: { new in
+                    editor.debouncedCommitClipProperties(clipIds: targetIds, key: "textHighlight") {
+                        var a = $0.textAnimation ?? TextAnimation()
+                        a.highlight = TextStyle.RGBA(new)
+                        $0.textAnimation = a
+                    }
+                }
+            )
+        }
+    }
+}
