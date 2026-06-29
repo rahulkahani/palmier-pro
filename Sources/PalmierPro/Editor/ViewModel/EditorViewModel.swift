@@ -333,7 +333,7 @@ final class EditorViewModel {
         if isPlaying {
             videoEngine?.pause()
         }
-        videoEngine?.syncTextLayers()
+        videoEngine?.refreshVisuals()
         videoEngine?.rebuild()
     }
 

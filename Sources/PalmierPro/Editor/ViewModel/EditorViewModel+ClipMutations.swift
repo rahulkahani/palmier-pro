@@ -340,9 +340,8 @@ extension EditorViewModel {
         }
         modify(&clip)
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = clip
-        // Text renders via CATextLayer overlay — skip the composition path.
         if clip.mediaType == .text {
-            videoEngine?.syncTextLayers()
+            videoEngine?.refreshVisuals()
             return
         }
         if rebuild {
@@ -369,7 +368,7 @@ extension EditorViewModel {
                 touchedVisual = true
             }
         }
-        if touchedText { videoEngine?.syncTextLayers() }
+        if touchedText { videoEngine?.refreshVisuals() }
         if touchedVisual {
             if rebuild {
                 notifyTimelineChangedDebounced()
@@ -384,7 +383,7 @@ extension EditorViewModel {
               let loc = findClip(id: clipId) else { return }
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = original
         if original.mediaType == .text {
-            videoEngine?.syncTextLayers()
+            videoEngine?.refreshVisuals()
         } else {
             notifyTimelineChanged()
         }
@@ -406,6 +405,22 @@ extension EditorViewModel {
             guard !Task.isCancelled, let self else { return }
             self.commitClipProperty(clipId: clipId, modify)
             self.pendingDebouncedCommits.removeValue(forKey: taskKey)
+        }
+    }
+
+    func debouncedCommitClipProperties(
+        clipIds: [String],
+        key: String,
+        debounce: Duration = .milliseconds(400),
+        _ modify: @escaping (inout Clip) -> Void
+    ) {
+        applyClipProperties(clipIds: clipIds, rebuild: true, modify)
+        pendingDebouncedCommits[key]?.cancel()
+        pendingDebouncedCommits[key] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: debounce)
+            guard !Task.isCancelled, let self else { return }
+            self.commitClipProperties(clipIds: clipIds, modify)
+            self.pendingDebouncedCommits.removeValue(forKey: key)
         }
     }
 
@@ -447,7 +462,7 @@ extension EditorViewModel {
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = clip
         registerClipPropertySwap(clipId: clipId, undoTarget: before, redoTarget: clip)
         if clip.mediaType == .text {
-            videoEngine?.syncTextLayers()
+            videoEngine?.refreshVisuals()
         } else {
             notifyTimelineChanged()
         }
@@ -469,7 +484,7 @@ extension EditorViewModel {
                 touchedVisual = true
             }
         }
-        if touchedText { videoEngine?.syncTextLayers() }
+        if touchedText { videoEngine?.refreshVisuals() }
         if touchedVisual { notifyTimelineChanged() }
     }
 
@@ -481,7 +496,7 @@ extension EditorViewModel {
             }
             vm.registerClipPropertySwap(clipId: clipId, undoTarget: redoTarget, redoTarget: undoTarget)
             if undoTarget.mediaType == .text {
-                vm.videoEngine?.syncTextLayers()
+                vm.videoEngine?.refreshVisuals()
             } else {
                 vm.notifyTimelineChanged()
             }

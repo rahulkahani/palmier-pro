@@ -17,11 +17,16 @@ enum FrameRenderer {
 
         var accum = CIImage(color: .black).cropped(to: renderRect)
         for layer in instruction.layers {
-            guard let buffer = sourceFrame(layer.trackID) else { continue }
-            if let image = composedLayer(layer, buffer: buffer, frame: frame,
-                                         renderSize: instruction.renderSize) {
-                accum = image.composited(over: accum)
+            let image: CIImage?
+            switch layer.source {
+            case .track(let id):
+                guard let buffer = sourceFrame(id) else { continue }
+                image = composedLayer(layer, buffer: buffer, frame: frame,
+                                      renderSize: instruction.renderSize)
+            case .text:
+                image = composedTextLayer(layer, frame: frame, renderSize: instruction.renderSize)
             }
+            if let image { accum = image.composited(over: accum) }
         }
         context.render(accum, to: output, bounds: renderRect, colorSpace: nil)
         tag709(output)
@@ -91,6 +96,34 @@ enum FrameRenderer {
         if alpha < 1 {
             // Alpha only — CIColorMatrix re-premultiplies by the result's alpha, so
             // scaling RGB too would double the fade.
+            image = image.applyingFilter("CIColorMatrix", parameters: [
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: alpha),
+            ])
+        }
+        return image
+    }
+
+    /// Text renders flat in place; opacity fades apply after. Per-word animation bakes in at raster. Preset only, no keyframed transform.
+    private static func composedTextLayer(
+        _ layer: LayerPlan,
+        frame: Int,
+        renderSize: CGSize
+    ) -> CIImage? {
+        let clip = layer.clip
+        let alpha = min(1.0, max(0.0, clip.opacityAt(frame: frame)))
+        guard alpha > 0 else { return nil }
+        guard var image = TextFrameRenderer.image(clip: clip, frame: frame, renderSize: renderSize)?
+            .unpremultiplyingAlpha() else { return nil }
+
+        if let effects = clip.effects, !effects.isEmpty {
+            let offset = frame - clip.startFrame
+            for effect in effects where effect.enabled {
+                guard let descriptor = EffectRegistry.descriptor(id: effect.type) else { continue }
+                image = descriptor.render(image, effect: effect, atOffset: offset)
+            }
+        }
+
+        if alpha < 1 {
             image = image.applyingFilter("CIColorMatrix", parameters: [
                 "inputAVector": CIVector(x: 0, y: 0, z: 0, w: alpha),
             ])

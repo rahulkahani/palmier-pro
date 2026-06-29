@@ -492,7 +492,6 @@ extension EditorViewModel {
         }
 
         let asset = currentItem.asset
-        let timelineSnapshot = timeline
         let fps = timeline.fps
         let canvas = CGSize(width: timeline.width, height: timeline.height)
         let time = CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps))
@@ -523,24 +522,8 @@ extension EditorViewModel {
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                let finalCG: CGImage
-                if isTimelineTab {
-                    let textRoot = TextLayerController.buildSnapshot(
-                        timeline: timelineSnapshot,
-                        canvasSize: canvas,
-                        atFrame: frame
-                    )
-                    guard let composited = Self.compositeCapture(
-                        video: videoCG, textRoot: textRoot, canvas: canvas
-                    ) else {
-                        Log.project.error("captureCurrentFrameToMedia: composite failed")
-                        return
-                    }
-                    finalCG = composited
-                } else {
-                    finalCG = videoCG
-                }
-                let rep = NSBitmapImageRep(cgImage: finalCG)
+                // The timeline videoComposition already composites text via CustomVideoCompositor.
+                let rep = NSBitmapImageRep(cgImage: videoCG)
                 guard let data = rep.representation(using: .png, properties: [:]) else {
                     Log.project.error("captureCurrentFrameToMedia: png encode failed")
                     return
@@ -556,33 +539,6 @@ extension EditorViewModel {
                 }
             }
         }
-    }
-
-    static func compositeCapture(video: CGImage, textRoot: CALayer, canvas: CGSize) -> CGImage? {
-        let width = Int(canvas.width)
-        let height = Int(canvas.height)
-        let colorSpace = video.colorSpace?.model == .rgb
-            ? video.colorSpace!
-            : (CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB())
-        guard let context = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-        ) else {
-            return nil
-        }
-        context.draw(video, in: CGRect(origin: .zero, size: canvas))
-        // CALayer.render ignores isGeometryFlipped; flip the context to land glyphs upright.
-        context.saveGState()
-        context.translateBy(x: 0, y: canvas.height)
-        context.scaleBy(x: 1, y: -1)
-        textRoot.render(in: context)
-        context.restoreGState()
-        return context.makeImage()
     }
 
     func finalizeImportedAsset(_ asset: MediaAsset) async {
@@ -635,6 +591,9 @@ extension EditorViewModel {
         /// When nil the box is auto-fit to content and centered on the canvas.
         let transform: Transform?
         var captionGroupId: String? = nil
+        /// Per-word timing (clip-relative frames) for karaoke animation; empty when unavailable.
+        var words: [WordTiming]? = nil
+        var animation: TextAnimation? = nil
     }
 
     /// Batch variant of `addTextClip` for agent flows.
@@ -678,6 +637,8 @@ extension EditorViewModel {
                 clip.textContent = spec.content
                 clip.textStyle = spec.style
                 clip.captionGroupId = spec.captionGroupId
+                clip.wordTimings = spec.words
+                clip.textAnimation = spec.animation
                 timeline.tracks[spec.trackIndex].clips.append(clip)
                 createdIds[i] = clip.id
             }
@@ -686,7 +647,7 @@ extension EditorViewModel {
         for i in Set(specs.map(\.trackIndex)) where timeline.tracks.indices.contains(i) {
             sortClips(trackIndex: i)
         }
-        videoEngine?.syncTextLayers()
+        videoEngine?.refreshVisuals()
         return createdIds.compactMap { $0 }
     }
 
@@ -722,13 +683,13 @@ extension EditorViewModel {
         undoManager?.registerUndo(withTarget: self) { vm in
             if let loc = vm.findClip(id: clipId) {
                 vm.timeline.tracks[loc.trackIndex].clips.remove(at: loc.clipIndex)
-                vm.videoEngine?.syncTextLayers()
+                vm.videoEngine?.refreshVisuals()
             }
         }
         undoManager?.setActionName("Add Text")
 
         selectedClipIds = [clipId]
-        videoEngine?.syncTextLayers()
+        videoEngine?.refreshVisuals()
         return clipId
     }
 }

@@ -10,6 +10,8 @@ extension EditorViewModel {
         var textCase: CaptionCase = .auto
         var censorProfanity: Bool = false
         var locale: Locale? = nil
+        /// Animation applied to every generated caption clip (timed from the transcript).
+        var animation: TextAnimation = TextAnimation()
     }
 
     enum CaptionCase: String, CaseIterable, Sendable {
@@ -47,6 +49,15 @@ extension EditorViewModel {
             case .noSource: "No audio clips to caption."
             }
         }
+    }
+
+    /// Text clips sharing this clip's caption group (so animation applies once for the whole
+    /// caption track), or just the clip itself when it isn't part of a caption.
+    func captionGroupTextClipIds(for clipId: String) -> [String] {
+        guard let clip = clipFor(id: clipId), let group = clip.captionGroupId else { return [clipId] }
+        let ids = timeline.tracks.flatMap(\.clips)
+            .filter { $0.captionGroupId == group && $0.mediaType == .text }.map(\.id)
+        return ids.isEmpty ? [clipId] : ids
     }
 
     func captionCanTranscribe(_ clip: Clip) -> Bool {
@@ -180,10 +191,11 @@ extension EditorViewModel {
             }
         }
 
+        let animation: TextAnimation? = request.animation.isActive ? request.animation : nil
         return targets.flatMap { t -> [TextClipSpec] in
             guard let phrases = phrasesByClip[t.id] else { return [] }
-            let cased = phrases.map { CaptionBuilder.Phrase(text: request.textCase.apply($0.text), start: $0.start, end: $0.end) }
-            return CaptionBuilder.specs(for: cased, sourceClip: t.clip, trackIndex: 0, fps: fps, style: request.style, captionGroupId: groupId, transformFor: transformFor)
+            let cased = phrases.map { CaptionBuilder.Phrase(text: request.textCase.apply($0.text), start: $0.start, end: $0.end, words: $0.words) }
+            return CaptionBuilder.specs(for: cased, sourceClip: t.clip, trackIndex: 0, fps: fps, style: request.style, captionGroupId: groupId, animation: animation, transformFor: transformFor)
         }
     }
 
@@ -247,7 +259,7 @@ extension EditorViewModel {
         undoManager?.enableUndoRegistration()
         guard !ids.isEmpty else {
             timeline = before
-            videoEngine?.syncTextLayers()
+            videoEngine?.refreshVisuals()
             return []
         }
         registerTimelineSwap(undoState: before, redoState: timeline, actionName: "Generate Captions")

@@ -55,6 +55,21 @@ struct CaptionBuilderTests {
 
     private let clip = Clip(mediaRef: "m", startFrame: 30, durationFrames: 120)
 
+    @Test func carriesWordTimingsAndAnimation() {
+        let p = CaptionBuilder.Phrase(text: "hi there", start: 1.0, end: 2.0, words: [
+            CaptionBuilder.WordSpan(text: "hi", start: 1.0, end: 1.4),
+            CaptionBuilder.WordSpan(text: "there", start: 1.5, end: 2.0),
+        ])
+        let specs = CaptionBuilder.specs(
+            for: [p], sourceClip: clip, trackIndex: 0, fps: 30,
+            style: TextStyle(), captionGroupId: "g1", animation: TextAnimation(preset: .wordPop))
+        #expect(specs[0].animation?.preset == .wordPop)
+        let words = try! #require(specs[0].words)
+        #expect(words.map(\.text) == ["hi", "there"])
+        #expect(words[0].startFrame == 0 && words[0].endFrame == 12)   // clip-relative
+        #expect(words[1].startFrame == 15 && words[1].endFrame == 30)
+    }
+
     @Test func mapsSecondsThroughClipPlacement() {
         let p = CaptionBuilder.Phrase(text: "hi", start: 1.0, end: 2.0)
         let specs = CaptionBuilder.specs(for: [p], sourceClip: clip, trackIndex: 0, fps: 30, style: TextStyle(), captionGroupId: "g1")
