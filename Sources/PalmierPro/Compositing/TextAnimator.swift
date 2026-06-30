@@ -91,10 +91,12 @@ enum TextAnimator {
         return CGFloat(1 + (s + 1) * p * p * p + s * p * p)
     }
 
-    /// 0 outside the word's active span, ramping to 1 inside (eased at both edges).
+    /// 0 outside the active span, with the ramp shortened so fast words reach 1.
     private static func activeRamp(_ rel: Int, word: WordTiming, ramp: Int) -> Double {
         guard rel >= word.startFrame, rel < word.endFrame else { return 0 }
-        let r = max(1, ramp)
+        let span = max(1, word.endFrame - word.startFrame)
+        guard span > 1 else { return 1 }
+        let r = min(max(1, ramp), max(1, span / 2))
         let rampIn = smoothstep(min(1, Double(rel - word.startFrame) / Double(r)))
         let rampOut = smoothstep(min(1, Double(word.endFrame - rel) / Double(r)))
         return min(rampIn, rampOut)
