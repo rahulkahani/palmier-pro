@@ -294,6 +294,9 @@ extension ToolExecutor {
         withUndoGroup(editor, actionName: actionName) {
             editor.commitClipProperties(clipIds: clipIds) { clip in
                 if let content {
+                    if clip.textContent != content {
+                        clip.wordTimings = nil
+                    }
                     clip.textContent = content
                 }
                 if textStylePatch.hasAnyField {
@@ -314,7 +317,16 @@ extension ToolExecutor {
                     clip.transform = next
                 }
                 if shouldSetAnimation {
-                    clip.textAnimation = animation
+                    if let animation {
+                        var current = clip.textAnimation ?? TextAnimation()
+                        current.preset = animation.preset
+                        if let highlight = animation.highlight {
+                            current.highlight = highlight
+                        }
+                        clip.textAnimation = current
+                    } else {
+                        clip.textAnimation = nil
+                    }
                 }
                 if let hl = highlightOnly {
                     var a = clip.textAnimation ?? TextAnimation()
