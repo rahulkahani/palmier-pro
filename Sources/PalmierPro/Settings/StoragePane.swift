@@ -14,7 +14,7 @@ struct StoragePane: View {
                     Text("Cache")
                         .font(.system(size: AppTheme.FontSize.md))
                         .foregroundStyle(AppTheme.Text.primaryColor)
-                    Text("Saved playback previews, waveforms, and filmstrip thumbnails. Safe to clear; they'll rebuild as needed.")
+                    Text("Saved playback previews, waveforms, filmstrip thumbnails, and transcripts. Safe to clear; they'll rebuild as needed.")
                         .font(.system(size: AppTheme.FontSize.sm))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .fixedSize(horizontal: false, vertical: true)
@@ -99,7 +99,7 @@ struct StoragePane: View {
         }
     }
 
-    private nonisolated static let caches = [ImageVideoGenerator.cache, MediaVisualCache.diskCache]
+    private nonisolated static let caches = [ImageVideoGenerator.cache, MediaVisualCache.diskCache, DiskCache(directory: TranscriptCache.directory)]
 
     private var displayPath: String {
         DiskCache.rootDirectory.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
