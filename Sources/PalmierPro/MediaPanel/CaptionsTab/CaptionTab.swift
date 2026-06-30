@@ -20,6 +20,10 @@ struct CaptionTab: View {
     @State private var supportedLocales: [Locale] = []
     @State private var isGenerating = false
     @State private var note: String?
+    @State private var sourceExpanded = true
+    @State private var styleExpanded = true
+    @State private var animationExpanded = true
+    @State private var placementExpanded = true
 
     private static let previewText = "Captions will look like this"
 
@@ -101,7 +105,7 @@ struct CaptionTab: View {
     }
 
     private var sourceSection: some View {
-        InspectorSection("Source") {
+        InspectorSection("Source", isExpanded: $sourceExpanded) {
             InspectorRow(
                 icon: "waveform",
                 label: "Source",
@@ -187,7 +191,7 @@ struct CaptionTab: View {
     }
 
     private var styleSection: some View {
-        InspectorSection("Style") {
+        InspectorSection("Style", isExpanded: $styleExpanded) {
             InspectorRow(icon: "character", label: "Font") {
                 FontPickerField(current: style.fontName, onPreview: { style.fontName = $0 }, onChange: { style.fontName = $0 }, onCancel: {})
             }
@@ -258,7 +262,7 @@ struct CaptionTab: View {
     }
 
     private var animationSection: some View {
-        InspectorSection("Animation") {
+        InspectorSection("Animation", isExpanded: $animationExpanded) {
             CaptionPresetGallery(selection: $animationPreset, highlight: animationHighlight)
             if animationPreset.usesHighlight {
                 InspectorRow(icon: "highlighter", label: "Highlight", labelHelp: "Color for the active word.") {
@@ -269,7 +273,7 @@ struct CaptionTab: View {
     }
 
     private var placementSection: some View {
-        InspectorSection("Placement") {
+        InspectorSection("Placement", isExpanded: $placementExpanded) {
             previewBox
             HStack(spacing: AppTheme.Spacing.mdLg) {
                 Spacer(minLength: AppTheme.Spacing.xs)
