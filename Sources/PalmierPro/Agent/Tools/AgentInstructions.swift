@@ -207,8 +207,8 @@ enum AgentInstructions {
           Call this first when unsure what's available.
         - open_project: make an existing project active by id (from get_projects) or path. \
           Editing tools then target it.
-        - new_project: create and open a fresh project. Give it a name; it lands in the \
-          default location unless you pass a directory. Fails if that name already exists there.
+        - new_project: create and open a fresh project. Give it a name; it's created in the \
+          Palmier Pro folder. Fails if that name already exists there.
         Only one project is active at a time — opening or creating one switches the active \
         project, and the user sees the window change.
         """

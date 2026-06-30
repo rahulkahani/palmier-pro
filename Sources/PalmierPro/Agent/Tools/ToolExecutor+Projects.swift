@@ -20,7 +20,7 @@ extension ToolExecutor {
     }
 
     private func getProjects() throws -> ToolResult {
-        let openDocs = Self.openProjects()
+        let openDocs = AppState.shared.openProjects
         let openURLs = Set(openDocs.compactMap { $0.fileURL?.standardizedFileURL })
         let activeURL = AppState.shared.activeProject?.fileURL?.standardizedFileURL
 
@@ -48,7 +48,7 @@ extension ToolExecutor {
         }
         let doc = try await AppState.shared.openProjectAsync(at: url)
         notifyNowEditing(doc)
-        return .ok("Now editing “\(doc.displayName ?? Project.defaultProjectName)”. \(Self.openProjects().count) project(s) open.")
+        return .ok("Now editing “\(doc.displayName ?? Project.defaultProjectName)”. \(AppState.shared.openProjects.count) project(s) open.")
     }
 
     private func newProject(_ args: [String: Any]) async throws -> ToolResult {
@@ -74,9 +74,5 @@ extension ToolExecutor {
     private func notifyNowEditing(_ doc: VideoProject) {
         let name = doc.displayName ?? Project.defaultProjectName
         doc.editorViewModel.agentService.postSystemNotice("Now editing: \(name)")
-    }
-
-    private static func openProjects() -> [VideoProject] {
-        NSDocumentController.shared.documents.compactMap { $0 as? VideoProject }
     }
 }

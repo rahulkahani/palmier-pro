@@ -26,6 +26,10 @@ final class AppState {
 
     private(set) var activeProject: VideoProject?
 
+    var openProjects: [VideoProject] {
+        NSDocumentController.shared.documents.compactMap { $0 as? VideoProject }
+    }
+
     private(set) var mcpService: MCPService?
 
     func startMCPService() {
@@ -115,7 +119,6 @@ final class AppState {
     }
 
     private func notificationTargetProject(assetId: String?, projectURL: URL?) -> VideoProject? {
-        let openProjects = NSDocumentController.shared.documents.compactMap { $0 as? VideoProject }
         if let projectURL {
             return openProjects.first { Self.sameFile($0.fileURL, projectURL) }
         }
@@ -145,24 +148,30 @@ final class AppState {
         return doc
     }
 
-    /// Creates a new project, errors if name exists in directory.
+    /// Creates a new project in the storage folder; errors if the name is invalid or already taken.
     @discardableResult
-    func createProject(named name: String, in directory: URL = Project.storageDirectory) async throws -> VideoProject {
+    func createProject(named name: String) async throws -> VideoProject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = trimmed.isEmpty ? Project.defaultProjectName : trimmed
         guard !base.contains("/"), !base.contains("\\"), base != ".", base != ".." else {
             throw ProjectError.invalidName(base)
         }
+        let directory = Project.storageDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(base).appendingPathExtension(Project.fileExtension)
         guard !FileManager.default.fileExists(atPath: url.path) else {
             throw ProjectError.nameTaken(url)
         }
         let doc = instantiateProject(at: url)
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            doc.save(to: url, ofType: VideoProject.typeIdentifier, for: .saveOperation) { error in
-                if let error { cont.resume(throwing: error) } else { cont.resume() }
+        do {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                doc.save(to: url, ofType: VideoProject.typeIdentifier, for: .saveOperation) { error in
+                    if let error { cont.resume(throwing: error) } else { cont.resume() }
+                }
             }
+        } catch {
+            doc.close()
+            throw error
         }
         ProjectRegistry.shared.register(url)
         return doc
@@ -213,9 +222,7 @@ final class AppState {
     }
 
     private func showExistingProject(at url: URL, register: Bool, options: ProjectOpenOptions) -> VideoProject? {
-        if let existing = NSDocumentController.shared.documents
-            .compactMap({ $0 as? VideoProject })
-            .first(where: { Self.sameFile($0.fileURL, url) }) {
+        if let existing = openProjects.first(where: { Self.sameFile($0.fileURL, url) }) {
             showEditor(for: existing)
             if register { ProjectRegistry.shared.register(url) }
             apply(options, to: existing.editorViewModel)
