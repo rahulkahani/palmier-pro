@@ -553,6 +553,26 @@ struct ToolExecutorClipTests {
         #expect(clip.durationFrames == 200)
     }
 
+    @Test func setSpeedRescalesTextWordTimings() async throws {
+        var clip = Fixtures.clip(id: "caption", mediaRef: "text", mediaType: .text, start: 0, duration: 120)
+        clip.textContent = "one two"
+        clip.wordTimings = [
+            WordTiming(text: "one", startFrame: 0, endFrame: 60),
+            WordTiming(text: "two", startFrame: 60, endFrame: 120),
+        ]
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])]))
+
+        let result = await h.runRaw("set_clip_properties", args: ["clipIds": ["caption"], "speed": 2.0])
+
+        #expect(result.isError == false, "\(ToolHarness.textOf(result))")
+        let updated = h.editor.timeline.tracks[0].clips[0]
+        #expect(updated.durationFrames == 60)
+        #expect(updated.wordTimings == [
+            WordTiming(text: "one", startFrame: 0, endFrame: 30),
+            WordTiming(text: "two", startFrame: 30, endFrame: 60),
+        ])
+    }
+
     // MARK: - add_clips
 
     @Test func addClipsPlacesClipOnTrack() async throws {
@@ -1823,5 +1843,43 @@ struct SetClipPropertiesTests {
             #expect(clip.textStyle?.background.enabled == true)
             #expect(clip.textStyle?.background.color == TextStyle.RGBA(hex: "#00000080"))
         }
+    }
+
+    @Test func updateTextAnimationPreservesExistingHighlight() async {
+        let highlight = TextStyle.RGBA(r: 1, g: 0, b: 0, a: 1)
+        var clip = Fixtures.clip(id: "title", mediaRef: "text", mediaType: .text, start: 0, duration: 60)
+        clip.textContent = "Title"
+        clip.textAnimation = TextAnimation(preset: .highlightPop, perWordFrames: 12, highlight: highlight)
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])]))
+
+        let result = await h.runRaw("update_text", args: [
+            "clipIds": ["title"],
+            "animation": "wordPop",
+        ])
+
+        #expect(result.isError == false, "\(ToolHarness.textOf(result))")
+        let animation = h.editor.timeline.tracks[0].clips[0].textAnimation
+        #expect(animation?.preset == .wordPop)
+        #expect(animation?.perWordFrames == 12)
+        #expect(animation?.highlight == highlight)
+    }
+
+    @Test func updateTextContentClearsWordTimings() async {
+        var clip = Fixtures.clip(id: "title", mediaRef: "text", mediaType: .text, start: 0, duration: 60)
+        clip.textContent = "old text"
+        clip.textStyle = TextStyle()
+        clip.wordTimings = [
+            WordTiming(text: "old", startFrame: 0, endFrame: 30),
+            WordTiming(text: "text", startFrame: 30, endFrame: 60),
+        ]
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])]))
+
+        let result = await h.runRaw("update_text", args: [
+            "clipIds": ["title"],
+            "content": "new text",
+        ])
+
+        #expect(result.isError == false, "\(ToolHarness.textOf(result))")
+        #expect(h.editor.timeline.tracks[0].clips[0].wordTimings == nil)
     }
 }

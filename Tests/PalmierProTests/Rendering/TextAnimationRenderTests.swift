@@ -61,4 +61,41 @@ struct TextAnimationRenderTests {
         where mid[i] > 180 && mid[i + 1] > 150 && mid[i + 2] < 90 { yellow += 1 }
         #expect(yellow > 20, "active word should be highlighted yellow (\(yellow))")
     }
+
+    @Test func tokenTimingsSplitAlignedTranscriptSpan() {
+        let tokens = [
+            (range: NSRange(location: 0, length: 3), text: "New"),
+            (range: NSRange(location: 4, length: 4), text: "York"),
+        ]
+
+        let timings = TextFrameRenderer.tokenTimings(
+            tokens,
+            [WordTiming(text: "New York", startFrame: 10, endFrame: 50)],
+            duration: 90
+        )
+
+        #expect(timings == [
+            WordTiming(text: "New", startFrame: 10, endFrame: 30),
+            WordTiming(text: "York", startFrame: 30, endFrame: 50),
+        ])
+    }
+
+    @Test func tokenTimingsMergeAlignedTranscriptSpans() {
+        let tokens = [
+            (range: NSRange(location: 0, length: 7), text: "NewYork"),
+        ]
+
+        let timings = TextFrameRenderer.tokenTimings(
+            tokens,
+            [
+                WordTiming(text: "New", startFrame: 10, endFrame: 30),
+                WordTiming(text: "York", startFrame: 30, endFrame: 50),
+            ],
+            duration: 90
+        )
+
+        #expect(timings == [
+            WordTiming(text: "NewYork", startFrame: 10, endFrame: 50),
+        ])
+    }
 }

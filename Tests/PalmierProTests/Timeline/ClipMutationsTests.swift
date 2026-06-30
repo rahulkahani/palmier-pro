@@ -394,6 +394,49 @@ struct WritePositionTests {
     }
 }
 
+@Suite("EditorViewModel — clip property commits")
+@MainActor
+struct ClipPropertyCommitTests {
+
+    @Test func commitClipPropertiesGroupsMultipleClipUndo() {
+        var a = Fixtures.clip(id: "a", mediaRef: "text", mediaType: .text, start: 0, duration: 30)
+        var b = Fixtures.clip(id: "b", mediaRef: "text", mediaType: .text, start: 30, duration: 30)
+        a.textContent = "one"
+        b.textContent = "two"
+        let e = editor([Fixtures.videoTrack(clips: [a, b])])
+        let undoManager = UndoManager()
+        e.undoManager = undoManager
+
+        e.commitClipProperties(clipIds: ["a", "b"]) {
+            $0.textAnimation = TextAnimation(preset: .wordPop)
+        }
+
+        #expect(e.timeline.tracks[0].clips.allSatisfy { $0.textAnimation?.preset == .wordPop })
+        undoManager.undo()
+        #expect(e.timeline.tracks[0].clips.allSatisfy { $0.textAnimation == nil })
+        #expect(undoManager.canUndo == false)
+    }
+
+    @Test func cancelDebouncedCommitPreventsPendingHighlightWrite() async throws {
+        var clip = Fixtures.clip(id: "caption", mediaRef: "text", mediaType: .text, start: 0, duration: 30)
+        clip.textAnimation = TextAnimation(preset: .highlightPop, highlight: .init(r: 1, g: 0, b: 0, a: 1))
+        let e = editor([Fixtures.videoTrack(clips: [clip])])
+
+        e.debouncedCommitClipProperties(clipIds: ["caption"], key: "textHighlight", debounce: .milliseconds(5)) {
+            var animation = $0.textAnimation ?? TextAnimation()
+            animation.highlight = .init(r: 0, g: 0, b: 1, a: 1)
+            $0.textAnimation = animation
+        }
+        e.cancelDebouncedCommit(key: "textHighlight")
+        e.commitClipProperties(clipIds: ["caption"]) {
+            $0.textAnimation = nil
+        }
+
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(e.timeline.tracks[0].clips[0].textAnimation == nil)
+    }
+}
+
 @Suite("EditorViewModel — clearRegion")
 @MainActor
 struct ClearRegionTests {
