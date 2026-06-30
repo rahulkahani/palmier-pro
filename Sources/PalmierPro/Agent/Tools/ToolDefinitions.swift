@@ -17,6 +17,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case syncAudio = "sync_audio"
     case undo = "undo"
     case addTexts = "add_texts"
+    case updateText = "update_text"
     case addCaptions = "add_captions"
     case exportProject = "export_project"
     case generateVideo = "generate_video"
@@ -222,15 +223,14 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .setClipProperties,
-            description: "Apply the same property values to one or more clips in a single undoable action. Pass any combination of durationFrames, trimStartFrame, trimEndFrame, speed, volume, opacity, transform, blendMode (video/image clips only), or — for text clips only — content, fontName, fontSize, isBold, isItalic, color, alignment, animation, highlightColor. All values are applied to every clip in clipIds; for per-clip differences, make separate calls. trimStartFrame/trimEndFrame are offsets from the source media, not the timeline. speed 1.0 is normal, <1.0 slows (clip gets longer on the timeline), >1.0 speeds up. volume and opacity are 0.0–1.0. transform uses 0–1 normalized canvas coords, partial merge (pass only centerY to reposition vertically); flipHorizontal/flipVertical mirror the clip across the corresponding axis (no effect on text clips). When text content or typography changes without an explicit transform, the bounding box auto-refits. Text-only fields with any non-text clip in clipIds are rejected.\n\nFor moves and start-frame changes, use move_clips. For animated values (keyframes), use set_keyframes — setting volume or opacity here clears any existing keyframe track on that property.\n\nTiming changes (durationFrames, trimStartFrame, trimEndFrame, speed) on a linked clip carry over to its linked partner so audio/video stay in sync — same as the timeline UI. Per-clip fields (volume, opacity, transform, text*) don't propagate. trim and speed are skipped for text partners.\n\nTo restyle a whole caption track at once, pass captionGroupId instead of listing every caption clip — the values apply to every caption clip in that group.",
+            description: "Apply the same generic clip property values to one or more clips in a single undoable action. Pass any combination of durationFrames, trimStartFrame, trimEndFrame, speed, volume, opacity, transform, or blendMode (video/image clips only). For text content, typography, captions, and text animation, use update_text. All values are applied to every clip in clipIds; for per-clip differences, make separate calls. trimStartFrame/trimEndFrame are offsets from the source media, not the timeline. speed 1.0 is normal, <1.0 slows (clip gets longer on the timeline), >1.0 speeds up. volume and opacity are 0.0–1.0. transform uses 0–1 normalized canvas coords, partial merge (pass only centerY to reposition vertically); flipHorizontal/flipVertical mirror the clip across the corresponding axis.\n\nFor moves and start-frame changes, use move_clips. For animated values (keyframes), use set_keyframes — setting volume or opacity here clears any existing keyframe track on that property.\n\nTiming changes (durationFrames, trimStartFrame, trimEndFrame, speed) on a linked clip carry over to its linked partner so audio/video stay in sync — same as the timeline UI. Per-clip fields (volume, opacity, transform, blendMode) don't propagate. trim and speed are skipped for text partners.",
             inputSchema: objectSchema(
                 properties: [
                     "clipIds": [
                         "type": "array",
-                        "description": "Clip IDs to update. The property values below apply to every clip in this list. Optional if captionGroupId is given.",
+                        "description": "Clip IDs to update. The property values below apply to every clip in this list.",
                         "items": ["type": "string"],
                     ],
-                    "captionGroupId": ["type": "string", "description": "Optional. A caption group's id (from get_timeline's captionGroups). Expands to every caption clip in that group — use it to restyle all captions at once without listing clip ids. Combinable with clipIds."],
                     "durationFrames": ["type": "integer", "description": "New duration in frames."],
                     "trimStartFrame": ["type": "integer", "description": "SOURCE-media offset, NOT a timeline frame: frames trimmed off the start of the source — measured in PROJECT frames (the timeline's fps, same units as startFrame/durationFrames; never the source's own fps). To turn a get_transcript project frame P into this clip's source offset, use trimStartFrame + (P − startFrame) × speed; setting trimStartFrame to that value makes the clip begin at P's source content."],
                     "trimEndFrame": ["type": "integer", "description": "SOURCE-media offset, NOT a timeline frame: frames trimmed off the end of the source, in PROJECT frames. Maps the same way as trimStartFrame via startFrame/speed."],
@@ -249,22 +249,13 @@ enum ToolDefinitions {
                             "flipVertical": ["type": "boolean", "description": "Mirror across the horizontal axis."],
                         ],
                     ],
-                    "content": ["type": "string", "description": "Text clips only. New text content."],
-                    "fontName": ["type": "string", "description": "Text clips only. Font PostScript or family name."],
-                    "fontSize": ["type": "number", "description": "Text clips only. Font size in canvas points."],
-                    "isBold": ["type": "boolean", "description": "Text clips only. Toggles the bold trait when the selected font can resolve it."],
-                    "isItalic": ["type": "boolean", "description": "Text clips only. Toggles the italic trait when the selected font can resolve it."],
-                    "color": ["type": "string", "description": "Text clips only. Hex '#RRGGBB' or '#RRGGBBAA'."],
-                    "alignment": ["type": "string", "enum": ["left", "center", "right"], "description": "Text clips only."],
-                    "animation": ["type": "string", "enum": TextAnimation.Preset.agentValues, "description": "Text clips only. A whole-caption preset (fadeIn/popIn/slideUp/typewriter) or a per-word one (wordReveal/wordSlide/wordPop/wordCycle/highlightPop/highlightBlock); 'off' clears it. Use this to restyle a caption's animation."],
-                    "highlightColor": ["type": "string", "description": "Text clips only. Hex '#RRGGBB'/'#RRGGBBAA' for the active word, used by the per-word presets (motion presets tint it; Highlight/Highlight Block use it as the emphasis color)."],
                     "blendMode": [
                         "type": "string",
                         "enum": BlendMode.allCases.map(\.rawValue),
                         "description": "Video/image clips only. How the clip composites over the tracks below it (Premiere/Photoshop blend modes). 'normal' is the default (source-over) and clears any blend. Rejected on text/audio clips.",
                     ],
                 ],
-                required: []
+                required: ["clipIds"]
             )
         ),
         AgentTool(
@@ -376,38 +367,28 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .addTexts,
-            description: "Adds one or more text clips (titles, captions, lower-thirds) in a single undoable action. Text renders as a layer in the timeline's track order (track 0 = topmost), so it can sit behind clips on higher tracks. Set 'animation' per entry to animate (entrance or karaoke word-by-word). Transform uses 0–1 normalized canvas coords: (0.5,0.5) is center, (0.5,0.1) top-center, (0.5,0.9) bottom-center. Omit transform to center + auto-fit. Pass only centerX/centerY to reposition with auto-fit size (common for lower-thirds). Pass all four fields to override the box entirely. Colors are hex '#RRGGBB' or '#RRGGBBAA'.\n\ntrackIndex is optional. Omit it on all entries and the tool auto-creates one new video track at the top and places all text clips there — the common case for captions. To target existing tracks, set trackIndex on every entry (audio tracks rejected). Mixing (some entries specify, others omit) is rejected — split into two calls.\n\nTracks work as layers: clips on the SAME track are sequential — if a new clip's range overlaps an existing (or earlier-batch) clip on that track, the existing clip is trimmed/split/removed to make room, matching the UI's drag-onto-track overwrite behavior. To show multiple text clips at the same time (stacked titles, simultaneous labels), put each on a DIFFERENT trackIndex so they layer instead of trimming each other.\n\nFor captioning spoken audio, prefer add_captions — it transcribes and places styled caption clips in one call. Use add_texts only for bespoke text (titles, lower-thirds) or captioning a custom range by hand. Unknown fields are rejected.",
+            description: "Adds text clips as timeline layers. Omit trackIndex on every entry to create one new top video track; otherwise set trackIndex on every entry. Transform is normalized text-box center/size; center-only auto-fits, all four fields override the box. Use add_captions for spoken audio captions. Unknown fields are rejected.",
             inputSchema: objectSchema(
                 properties: [
                     "entries": [
                         "type": "array",
-                        "description": "Text clips to add. Each entry is independent.",
+                        "description": "Text clips to add.",
                         "items": [
                             "type": "object",
-                            "properties": [
-                                "trackIndex": ["type": "integer", "description": "Optional. Track index (0-based) for an existing non-audio track. Omit on every entry to auto-create one new track for the batch."],
-                                "startFrame": ["type": "integer", "description": "Frame position to place the clip"],
-                                "durationFrames": ["type": "integer", "description": "Duration in frames (>= 1)"],
-                                "content": ["type": "string", "description": "Text to display. Supports \\n for line breaks."],
+                            "properties": mergedProperties([
+                                "trackIndex": ["type": "integer", "description": "Existing non-audio track. Omit on all entries to create a new top track."],
+                                "startFrame": ["type": "integer", "description": "Timeline start frame."],
+                                "durationFrames": ["type": "integer", "description": "Duration in frames."],
+                                "content": ["type": "string", "description": "Text. Supports \\n."],
                                 "transform": [
                                     "type": "object",
-                                    "description": "Optional position/size. Omit for center + auto-fit. Pass centerX+centerY only for a specific position with auto-fit size. Pass all four for full override.",
-                                    "properties": [
-                                        "centerX": ["type": "number", "description": "Horizontal center 0–1 (0=left edge, 1=right edge)"],
-                                        "centerY": ["type": "number", "description": "Vertical center 0–1 (0=top, 1=bottom)"],
-                                        "width": ["type": "number", "description": "Width 0–1 (optional; omit for auto-fit)"],
-                                        "height": ["type": "number", "description": "Height 0–1 (optional; omit for auto-fit)"],
-                                    ],
+                                    "description": "Text box. Omit for centered auto-fit; center only auto-fits size; all four override.",
+                                    "properties": textBoxTransformProperties(),
                                 ],
-                                "fontName": ["type": "string", "description": "Font PostScript or family name, e.g. 'Helvetica-Bold', 'Georgia-Bold'. Default 'Helvetica-Bold'. Falls back to bold system font if not found."],
-                                "fontSize": ["type": "number", "description": "Font size in canvas points (default 96). On a 1080p canvas ~50 is a caption, ~120 is a title."],
-                                "isBold": ["type": "boolean", "description": "Toggle the bold trait when the selected font can resolve it. Default true."],
-                                "isItalic": ["type": "boolean", "description": "Toggle the italic trait when the selected font can resolve it. Default false."],
-                                "color": ["type": "string", "description": "Hex '#RRGGBB' or '#RRGGBBAA' (default '#FFFFFF')"],
-                                "alignment": ["type": "string", "enum": ["left", "center", "right"], "description": "Text alignment (default 'center')"],
-                                "animation": ["type": "string", "enum": TextAnimation.Preset.agentValues, "description": "Optional. A whole-caption preset (fadeIn/popIn/slideUp/typewriter) or a per-word one (wordReveal/wordSlide/wordPop/wordCycle/highlightPop/highlightBlock). Per-word presets use even spacing here — for audio-timed karaoke use add_captions. Default off."],
-                                "highlightColor": ["type": "string", "description": "Optional hex '#RRGGBB'/'#RRGGBBAA' for the active word, used by the per-word presets."],
-                            ],
+                            ], textStyleProperties(), [
+                                "animation": ["type": "string", "enum": TextAnimation.Preset.agentValues, "description": "Animation preset; off clears."],
+                                "highlightColor": ["type": "string", "description": "Active-word hex."],
+                            ]),
                             "required": ["startFrame", "durationFrames", "content"],
                         ],
                     ],
@@ -416,25 +397,45 @@ enum ToolDefinitions {
             )
         ),
         AgentTool(
-            name: .addCaptions,
-            description: "Auto-caption spoken audio: transcribes on-device and places styled caption clips on a new track — the same pipeline as the editor's Captions tab. This is the reliable path for 'caption this'; prefer it over hand-placing add_texts from a transcript. Omit clipIds to auto-pick the track with the most speech; pass clipIds to caption specific clips (e.g. only the interview).",
+            name: .updateText,
+            description: "Updates text clips or a captionGroupId. Use for content, typography, color, outline color, background color, animation, or text-box transform. Content/typography changes auto-fit the box unless transform is passed. Unknown fields are rejected.",
             inputSchema: objectSchema(
-                properties: [
-                    "clipIds": ["type": "array", "items": ["type": "string"], "description": "Optional. Audio/video clips to caption. Omit to auto-detect the primary spoken track."],
-                    "language": ["type": "string", "description": "Optional BCP-47 language of the speech (e.g. 'es', 'ja', 'en-GB'). Defaults to the system language — set this when the footage is in another language, or transcription will be garbage."],
-                    "fontName": ["type": "string", "description": "Optional font PostScript or family name (default 'Helvetica-Bold'). Falls back to bold system font if not found."],
-                    "fontSize": ["type": "number", "description": "Optional font size in canvas points (default 48)."],
-                    "isBold": ["type": "boolean", "description": "Optional. Toggle the bold trait when the selected font can resolve it (default true)."],
-                    "isItalic": ["type": "boolean", "description": "Optional. Toggle the italic trait when the selected font can resolve it (default false)."],
-                    "color": ["type": "string", "description": "Optional hex '#RRGGBB' or '#RRGGBBAA' (default white)."],
-                    "centerX": ["type": "number", "description": "Optional horizontal center 0–1 (default 0.5)."],
-                    "centerY": ["type": "number", "description": "Optional vertical center 0–1 (default 0.9, near the bottom)."],
-                    "textCase": ["type": "string", "enum": ["auto", "upper", "lower"], "description": "Optional letter case (default auto)."],
-                    "censorProfanity": ["type": "boolean", "description": "Optional. Mask profanity (default false)."],
-                    "maxWords": ["type": "integer", "description": "Optional cap on words per caption clip (e.g. 1–4 for punchy social captions). Omit to fit each caption to the box only."],
-                    "animation": ["type": "string", "enum": TextAnimation.Preset.agentValues, "description": "Optional caption animation. Per-word presets (wordReveal/wordSlide/wordPop/wordCycle/highlightPop/highlightBlock) reveal word-by-word, timed to the transcript automatically; whole-caption ones (fadeIn/popIn/slideUp/typewriter) animate the line. Default off."],
-                    "highlightColor": ["type": "string", "description": "Optional hex '#RRGGBB'/'#RRGGBBAA' for the active word, used by the per-word presets."],
-                ]
+                properties: mergedProperties([
+                    "clipIds": [
+                        "type": "array",
+                        "items": ["type": "string"],
+                        "description": "Text clip IDs. Optional if captionGroupId is given.",
+                    ],
+                    "captionGroupId": ["type": "string", "description": "Caption group id from get_timeline."],
+                    "content": ["type": "string", "description": "Replacement text. Supports \\n."],
+                    "transform": [
+                        "type": "object",
+                        "description": "Partial text-box transform; omitted fields keep current values.",
+                        "properties": textBoxTransformProperties(),
+                    ],
+                ], textStyleProperties(), [
+                    "animation": ["type": "string", "enum": TextAnimation.Preset.agentValues, "description": "Animation preset; off clears."],
+                    "highlightColor": ["type": "string", "description": "Active-word hex."],
+                ]),
+                required: []
+            )
+        ),
+        AgentTool(
+            name: .addCaptions,
+            description: "Transcribes spoken audio and creates styled caption text clips. Omit clipIds to auto-pick speech; pass clipIds to caption specific audio/video clips. Per-word animations are timed from transcript.",
+            inputSchema: objectSchema(
+                properties: mergedProperties([
+                    "clipIds": ["type": "array", "items": ["type": "string"], "description": "Audio/video clips to caption."],
+                    "language": ["type": "string", "description": "BCP-47 speech language."],
+                    "centerX": ["type": "number", "description": "0-1 horizontal center."],
+                    "centerY": ["type": "number", "description": "0-1 vertical center."],
+                    "textCase": ["type": "string", "enum": ["auto", "upper", "lower"], "description": "Letter case."],
+                    "censorProfanity": ["type": "boolean", "description": "Mask profanity."],
+                    "maxWords": ["type": "integer", "description": "Max words per caption."],
+                ], textStyleProperties(), [
+                    "animation": ["type": "string", "enum": TextAnimation.Preset.agentValues, "description": "Caption animation preset."],
+                    "highlightColor": ["type": "string", "description": "Active-word hex."],
+                ])
             )
         ),
         AgentTool(
@@ -848,6 +849,34 @@ enum ToolDefinitions {
 
     /// Tools for the in-app agent: every MCP tool plus read_skill.
     static var inAppAgent: [AgentTool] { all + [readSkill] }
+
+    private static func textBoxTransformProperties() -> [String: [String: Any]] {
+        [
+            "centerX": ["type": "number", "description": "0-1 horizontal center."],
+            "centerY": ["type": "number", "description": "0-1 vertical center."],
+            "width": ["type": "number", "description": "0-1 width."],
+            "height": ["type": "number", "description": "0-1 height."],
+        ]
+    }
+
+    private static func textStyleProperties() -> [String: [String: Any]] {
+        [
+            "fontName": ["type": "string", "description": "Font name."],
+            "fontSize": ["type": "number", "description": "Canvas points."],
+            "isBold": ["type": "boolean", "description": "Bold."],
+            "isItalic": ["type": "boolean", "description": "Italic."],
+            "color": ["type": "string", "description": "Text color hex."],
+            "alignment": ["type": "string", "enum": ["left", "center", "right"], "description": "Text alignment."],
+            "borderColor": ["type": "string", "description": "Text outline hex; enables outline."],
+            "backgroundColor": ["type": "string", "description": "Text box fill hex; enables fill."],
+        ]
+    }
+
+    private static func mergedProperties(_ chunks: [String: [String: Any]]...) -> [String: [String: Any]] {
+        chunks.reduce(into: [:]) { merged, chunk in
+            merged.merge(chunk) { _, new in new }
+        }
+    }
 
     private static func objectSchema(
         properties: [String: [String: Any]] = [:],

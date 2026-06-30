@@ -59,7 +59,6 @@ fileprivate struct SplitClipsInput: DecodableToolArgs {
 
 fileprivate struct SetClipPropertiesInput: DecodableToolArgs {
     let clipIds: [String]?
-    let captionGroupId: String?
     let durationFrames: Int?
     let trimStartFrame: Int?
     let trimEndFrame: Int?
@@ -67,33 +66,20 @@ fileprivate struct SetClipPropertiesInput: DecodableToolArgs {
     let volume: Double?
     let opacity: Double?
     let transform: ParsedTransform?
-    let content: String?
-    let fontName: String?
-    let fontSize: Double?
-    let isBold: Bool?
-    let isItalic: Bool?
-    let color: String?
-    let alignment: String?
-    let animation: String?
-    let highlightColor: String?
     let blendMode: String?
 
-    static let allowedKeys: Set<String> = [
-        "clipIds", "captionGroupId",
+    static let allowedKeys: Set<String> = Set([
+        "clipIds",
         "durationFrames", "trimStartFrame", "trimEndFrame", "speed",
         "volume", "opacity",
         "transform",
-        "content", "fontName", "fontSize", "isBold", "isItalic", "color", "alignment", "animation", "highlightColor",
         "blendMode",
-    ]
+    ])
 
     var hasAnyProperty: Bool {
         durationFrames != nil || trimStartFrame != nil || trimEndFrame != nil
             || speed != nil || volume != nil || opacity != nil
             || transform != nil
-            || content != nil || fontName != nil || fontSize != nil
-            || isBold != nil || isItalic != nil
-            || color != nil || alignment != nil || animation != nil || highlightColor != nil
             || blendMode != nil
     }
 }
@@ -451,20 +437,10 @@ extension ToolExecutor {
 
     // MARK: set_clip_properties
 
-    private static let textOnlyKeys: Set<String> = ["content", "fontName", "fontSize", "isBold", "isItalic", "color", "alignment"]
-
     func setClipProperties(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let input: SetClipPropertiesInput = try decodeToolArgs(args, path: "set_clip_properties")
-
-        // captionGroupId applies to every text clip in the group, plus any given clipIds.
-        var clipIds = input.clipIds ?? []
-        if let gid = input.captionGroupId {
-            let groupIds = editor.captionGroupTextClipIds(groupId: gid)
-            guard !groupIds.isEmpty else { throw ToolError("No caption clips found for captionGroupId: \(gid)") }
-            var seen = Set(clipIds)
-            for id in groupIds where seen.insert(id).inserted { clipIds.append(id) }
-        }
-        guard !clipIds.isEmpty else { throw ToolError("Provide a non-empty 'clipIds' array or a 'captionGroupId'") }
+        let clipIds = input.clipIds ?? []
+        guard !clipIds.isEmpty else { throw ToolError("Provide a non-empty 'clipIds' array") }
         guard input.hasAnyProperty else {
             throw ToolError("set_clip_properties needs at least one property to apply")
         }
@@ -486,33 +462,12 @@ extension ToolExecutor {
         if let t = input.trimEndFrame, t < 0 {
             throw ToolError("trimEndFrame must be >= 0 (got \(t))")
         }
-        let color = try parseColorHex(input.color, path: "set_clip_properties")
-        let alignment = try parseAlignment(input.alignment, path: "set_clip_properties")
-        let animation = try parseTextAnimation(preset: input.animation, highlightColor: input.highlightColor, path: "set_clip_properties")
-        let highlightOnly = input.animation == nil ? try parseColorHex(input.highlightColor, path: "set_clip_properties") : nil
 
-        // Resolve clipIds + collect types so we can reject text-only fields on non-text clips.
+        // Resolve clipIds + collect types for blend-mode validation.
         var clipTypes: [String: ClipType] = [:]
         for id in clipIds {
             guard let loc = editor.findClip(id: id) else { throw ToolError("Clip not found: \(id)") }
             clipTypes[id] = editor.timeline.tracks[loc.trackIndex].clips[loc.clipIndex].mediaType
-        }
-        let textOnlyUsed = [
-            input.content        != nil ? "content"        : nil,
-            input.fontName       != nil ? "fontName"       : nil,
-            input.fontSize       != nil ? "fontSize"       : nil,
-            input.isBold         != nil ? "isBold"         : nil,
-            input.isItalic       != nil ? "isItalic"       : nil,
-            input.color          != nil ? "color"          : nil,
-            input.alignment      != nil ? "alignment"      : nil,
-            input.animation      != nil ? "animation"      : nil,
-            input.highlightColor != nil ? "highlightColor" : nil,
-        ].compactMap { $0 }
-        if !textOnlyUsed.isEmpty {
-            let nonText = clipTypes.filter { $0.value != .text }.map { $0.key }.sorted()
-            if !nonText.isEmpty {
-                throw ToolError("text-only fields '\(textOnlyUsed.joined(separator: "', '"))' rejected on non-text clips: \(nonText.joined(separator: ", "))")
-            }
         }
 
         // blendMode applies only to visual (video/image) clips. "normal" clears it.
@@ -543,7 +498,6 @@ extension ToolExecutor {
         let summaries: [String] = withUndoGroup(editor, actionName: setActionName) {
             var summaries: [String] = []
             for id in clipIds {
-                let isText = clipTypes[id] == .text
                 let changed = Self.applyPropertyChanges(
                     durationFrames: input.durationFrames,
                     trimStartFrame: input.trimStartFrame,
@@ -552,24 +506,11 @@ extension ToolExecutor {
                     volume: input.volume,
                     opacity: input.opacity,
                     transform: input.transform,
-                    content: isText ? input.content : nil,
-                    fontName: isText ? input.fontName : nil,
-                    fontSize: isText ? input.fontSize : nil,
-                    isBold: isText ? input.isBold : nil,
-                    isItalic: isText ? input.isItalic : nil,
-                    color: isText ? color : nil,
-                    alignment: isText ? alignment : nil,
-                    animation: (isText && input.animation != nil) ? .some(animation) : nil,
-                    highlight: isText ? highlightOnly : nil,
                     blendMode: blendMode,
                     setBlendMode: setBlendMode,
                     clipId: id,
                     editor: editor
                 )
-                // Match the inspector: refit bbox after content/font change when caller didn't set a box.
-                if isText && input.transform == nil && (input.content != nil || input.fontName != nil || input.fontSize != nil || input.isBold != nil || input.isItalic != nil) {
-                    editor.fitTextClipToContent(clipId: id)
-                }
                 summaries.append("\(id)\(changed.isEmpty ? " (no-op)" : ": \(changed.joined(separator: ", "))")")
             }
             for partnerId in partners {
@@ -581,7 +522,6 @@ extension ToolExecutor {
                     trimEndFrame:   partnerIsText ? nil : input.trimEndFrame,
                     speed:          partnerIsText ? nil : input.speed,
                     volume: nil, opacity: nil, transform: nil,
-                    content: nil, fontName: nil, fontSize: nil, isBold: nil, isItalic: nil, color: nil, alignment: nil, animation: nil, highlight: nil,
                     blendMode: nil, setBlendMode: false,
                     clipId: partnerId,
                     editor: editor
@@ -602,15 +542,6 @@ extension ToolExecutor {
         volume: Double?,
         opacity: Double?,
         transform: ParsedTransform?,
-        content: String?,
-        fontName: String?,
-        fontSize: Double?,
-        isBold: Bool?,
-        isItalic: Bool?,
-        color: TextStyle.RGBA?,
-        alignment: TextStyle.Alignment?,
-        animation: TextAnimation??,   // outer nil = leave; .some(nil) = clear; .some(x) = set
-        highlight: TextStyle.RGBA?,   // merges into the existing/new animation without changing the preset
         blendMode: BlendMode?,
         setBlendMode: Bool,
         clipId: String,
@@ -653,27 +584,6 @@ extension ToolExecutor {
                 next.flipVertical = t.flipVertical ?? cur.flipVertical
                 clip.transform = next
                 changed.append("transform")
-            }
-            if content != nil || fontName != nil || fontSize != nil || isBold != nil || isItalic != nil || color != nil || alignment != nil {
-                if let c = content { clip.textContent = c; changed.append("content") }
-                var style = clip.textStyle ?? TextStyle()
-                if let f = fontName  { style.fontName = f; changed.append("fontName") }
-                if let s = fontSize  { style.fontSize = s; changed.append("fontSize") }
-                if let b = isBold    { style.isBold = b; changed.append("isBold") }
-                if let i = isItalic  { style.isItalic = i; changed.append("isItalic") }
-                if let c = color     { style.color = c; changed.append("color") }
-                if let a = alignment { style.alignment = a; changed.append("alignment") }
-                clip.textStyle = style
-            }
-            if case .some(let value) = animation {
-                clip.textAnimation = value
-                changed.append("animation")
-            }
-            if let hl = highlight {
-                var a = clip.textAnimation ?? TextAnimation()
-                a.highlight = hl
-                clip.textAnimation = a
-                changed.append("highlightColor")
             }
         }
         return changed

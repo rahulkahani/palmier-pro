@@ -2,9 +2,9 @@ import CoreGraphics
 import Foundation
 
 extension ToolExecutor {
-    private static let addCaptionsAllowedKeys: Set<String> = [
-        "clipIds", "fontName", "fontSize", "isBold", "isItalic", "color", "centerX", "centerY", "textCase", "censorProfanity", "language", "animation", "highlightColor", "maxWords",
-    ]
+    private static let addCaptionsAllowedKeys: Set<String> = Set([
+        "clipIds", "centerX", "centerY", "textCase", "censorProfanity", "language", "animation", "highlightColor", "maxWords",
+    ]).union(agentTextStylePatchAllowedKeys)
 
     func addCaptions(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         try validateUnknownKeys(args, allowed: Self.addCaptionsAllowedKeys, path: "add_captions")
@@ -12,11 +12,7 @@ extension ToolExecutor {
         let clipIds = (args["clipIds"] as? [Any])?.compactMap { $0 as? String } ?? []
 
         var style = TextStyle(fontSize: AppTheme.Caption.defaultFontSize)
-        if let f = args.string("fontName") { style.fontName = f }
-        if let s = args.double("fontSize") { style.fontSize = s }
-        if let b = args.bool("isBold") { style.isBold = b }
-        if let i = args.bool("isItalic") { style.isItalic = i }
-        if let c = try parseColorHex(args.string("color"), path: "add_captions") { style.color = c }
+        _ = Self.applyTextStylePatch(try parseTextStylePatch(args, path: "add_captions"), to: &style)
 
         let locale = try await Self.parseLocale(args, path: "add_captions")
 
