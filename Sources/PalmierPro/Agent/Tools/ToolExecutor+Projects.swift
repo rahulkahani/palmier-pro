@@ -22,7 +22,8 @@ extension ToolExecutor {
     private func getProjects() throws -> ToolResult {
         let openDocs = AppState.shared.openProjects
         let openURLs = Set(openDocs.compactMap { $0.fileURL?.standardizedFileURL })
-        let activeURL = AppState.shared.activeProject?.fileURL?.standardizedFileURL
+        let active = AppState.shared.activeProject
+        let activeURL = active?.fileURL?.standardizedFileURL
 
         // Only registered projects, sorted by most recently opened.
         let projects = ProjectRegistry.shared.sortedEntries.map { entry -> [String: Any] in
@@ -37,7 +38,10 @@ extension ToolExecutor {
             ]
         }
 
-        let payload: [String: Any] = ["openCount": openDocs.count, "projects": projects]
+        var payload: [String: Any] = ["openCount": openDocs.count, "projects": projects]
+        if let active {
+            payload["active"] = ["name": active.displayName ?? Project.defaultProjectName, "path": active.fileURL?.path ?? ""]
+        }
         return .ok(Self.jsonString(payload) ?? "{}")
     }
 

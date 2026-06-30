@@ -898,7 +898,7 @@ enum ToolDefinitions {
     /// MCP server only
     static let getProjects = AgentTool(
         name: .getProjects,
-        description: "List the user's known projects, most recently opened first: each entry's id, name, path, whether it's currently open, and whether it's the active project (the one editing tools act on). Call this to discover what's available before open_project, or to find out which project is active. Takes no arguments.",
+        description: "List the user's known projects, most recently opened first: each entry's id, name, path, whether it's currently open, and whether it's the active project (the one editing tools act on). Also returns a top-level `active` (name, path) for the current project, which may not appear in the list. Call this to discover what's available before open_project, or to find out which project is active. Takes no arguments.",
         inputSchema: objectSchema()
     )
 
