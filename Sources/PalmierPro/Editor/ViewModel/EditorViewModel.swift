@@ -380,8 +380,18 @@ final class EditorViewModel {
                 clip.trimStartFrame = trimStart
                 clip.trimEndFrame = max(0, totalSourceFrames - trimStart - consumed)
             } else {
-                if let t = trimStartFrame { clip.trimStartFrame = t }
-                if let t = trimEndFrame { clip.trimEndFrame = t }
+                let start = max(0, trimStartFrame ?? 0)
+                clip.trimStartFrame = start
+                if totalSourceFrames > 0 {
+                    // Omitting trimEndFrame must default to the real remaining source, not 0 —
+                    // otherwise the clip reports no tail headroom and can't be extended to reveal
+                    // more (the rest of the raw take). Clamp an explicit value to what exists.
+                    let consumed = Int((Double(durationFrames) * clip.speed).rounded())
+                    let remainingTail = max(0, totalSourceFrames - start - consumed)
+                    clip.trimEndFrame = min(trimEndFrame ?? remainingTail, remainingTail)
+                } else if let t = trimEndFrame {
+                    clip.trimEndFrame = t
+                }
             }
         }
 
