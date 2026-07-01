@@ -13,6 +13,16 @@ extension ToolExecutor {
         }
     }
 
+    private func defaultModelId(_ ids: [(id: String, paidOnly: Bool)], kind: String) throws -> String {
+        guard !ids.isEmpty else {
+            throw ToolError("Model catalog not loaded yet. Try again in a moment.")
+        }
+        guard let match = ids.first(where: { modelAvailable(paidOnly: $0.paidOnly) }) else {
+            throw ToolError("No \(kind) model is available on the current plan. Tell the user to subscribe.")
+        }
+        return match.id
+    }
+
     func generate(_ editor: EditorViewModel, _ args: [String: Any], type: ClipType) throws -> ToolResult {
         let prompt = try args.requireString("prompt")
         guard AccountService.shared.isSignedIn else {
@@ -23,9 +33,8 @@ extension ToolExecutor {
         }
         switch type {
         case .video:
-            guard let modelId = args.string("model") ?? VideoModelConfig.allModels.first(where: { modelAvailable(paidOnly: $0.paidOnly) })?.id else {
-                throw ToolError("Model catalog not loaded yet. Try again in a moment.")
-            }
+            let modelId = try args.string("model") ?? defaultModelId(
+                VideoModelConfig.allModels.map { (id: $0.id, paidOnly: $0.paidOnly) }, kind: "video")
             guard let model = VideoModelConfig.allModels.first(where: { $0.id == modelId }) else {
                 throw ToolError("Unknown model '\(modelId)'. Available: \(VideoModelConfig.allModels.map(\.id).joined(separator: ", "))")
             }
@@ -164,9 +173,8 @@ extension ToolExecutor {
         _ editor: EditorViewModel, _ args: [String: Any], prompt: String
     ) throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
-        guard let modelId = args.string("model") ?? ImageModelConfig.allModels.first(where: { modelAvailable(paidOnly: $0.paidOnly) })?.id else {
-            throw ToolError("Model catalog not loaded yet. Try again in a moment.")
-        }
+        let modelId = try args.string("model") ?? defaultModelId(
+            ImageModelConfig.allModels.map { (id: $0.id, paidOnly: $0.paidOnly) }, kind: "image")
         guard let model = ImageModelConfig.allModels.first(where: { $0.id == modelId }) else {
             throw ToolError("Unknown model '\(modelId)'. Available: \(ImageModelConfig.allModels.map(\.id).joined(separator: ", "))")
         }
@@ -215,9 +223,8 @@ extension ToolExecutor {
         guard AccountService.shared.hasCredits else {
             throw ToolError("Out of credits. Tell the user to add credits or subscribe to keep generating.")
         }
-        guard let modelId = args.string("model") ?? AudioModelConfig.allModels.first(where: { modelAvailable(paidOnly: $0.paidOnly) })?.id else {
-            throw ToolError("Model catalog not loaded yet. Try again in a moment.")
-        }
+        let modelId = try args.string("model") ?? defaultModelId(
+            AudioModelConfig.allModels.map { (id: $0.id, paidOnly: $0.paidOnly) }, kind: "audio")
         guard let model = AudioModelConfig.allModels.first(where: { $0.id == modelId }) else {
             throw ToolError("Unknown model '\(modelId)'. Available: \(AudioModelConfig.allModels.map(\.id).joined(separator: ", "))")
         }
