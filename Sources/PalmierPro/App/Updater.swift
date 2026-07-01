@@ -31,10 +31,6 @@ final class Updater: NSObject {
         controller?.checkForUpdates(sender)
     }
 
-    func dismissUpdate() {
-        clearUpdateAvailability()
-    }
-
     private func checkForUpdateInformation() {
         lastBackgroundCheck = Date()
         controller?.updater.checkForUpdateInformation()
