@@ -2,59 +2,41 @@ import SwiftUI
 
 struct UpdateSidebarCard: View {
     @Bindable private var updater = Updater.shared
+    @State private var isHovering = false
 
     var body: some View {
         if updater.updateAvailable {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                HStack(alignment: .center, spacing: AppTheme.Spacing.sm) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: AppTheme.FontSize.lg, weight: .semibold))
-                        .foregroundStyle(AppTheme.Update.accent)
-                        .frame(width: AppTheme.IconSize.lg, height: AppTheme.IconSize.lg)
-
+            Button {
+                updater.checkForUpdates(nil)
+            } label: {
+                HStack(spacing: AppTheme.Spacing.sm) {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                        Text("Update available")
-                            .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
+                        Text("Click to install update")
+                            .font(.system(size: AppTheme.FontSize.smMd, weight: .medium))
                             .foregroundStyle(AppTheme.Text.primaryColor)
-                        if let version = updater.updateVersion {
-                            Text("Version \(version) is ready to install.")
-                                .font(.system(size: AppTheme.FontSize.xs))
-                                .foregroundStyle(AppTheme.Text.secondaryColor)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        Text(updater.updateVersion.map { "Version \($0)" } ?? "New version available")
+                            .font(.system(size: AppTheme.FontSize.xs))
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
-                .padding(.trailing, AppTheme.IconSize.sm)
-
-                Button("Install Update") {
-                    updater.checkForUpdates(nil)
-                }
-                .buttonStyle(.capsule(.prominent, size: .small))
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal, AppTheme.Spacing.md)
+                .padding(.vertical, AppTheme.Spacing.md)
             }
-            .padding(AppTheme.Spacing.md)
+            .buttonStyle(.plain)
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                    .fill(AppTheme.Update.fill)
+                    .fill(isHovering ? AppTheme.Background.prominentColor : AppTheme.Background.raisedColor)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                    .strokeBorder(AppTheme.Update.border, lineWidth: AppTheme.BorderWidth.thin)
+                    .strokeBorder(AppTheme.Border.primaryColor, lineWidth: AppTheme.BorderWidth.hairline)
             )
-            .overlay(alignment: .topTrailing) {
-                Button {
-                    updater.dismissUpdate()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: AppTheme.FontSize.micro, weight: .bold))
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Dismiss")
-                .padding(AppTheme.Spacing.sm)
-            }
+            .onHover { isHovering = $0 }
+            .animation(.easeOut(duration: AppTheme.Anim.hover), value: isHovering)
             .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
     }
