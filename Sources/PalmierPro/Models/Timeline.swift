@@ -20,6 +20,7 @@ struct Timeline: Codable, Sendable, Equatable, Identifiable {
     var width: Int = 1920
     var height: Int = 1080
     var settingsConfigured: Bool = false
+    var folderId: String?
     var tracks: [Track] = []
     var viewState = TimelineViewState()
 
@@ -32,7 +33,7 @@ struct Timeline: Codable, Sendable, Equatable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, fps, width, height, settingsConfigured, tracks, viewState
+        case id, name, fps, width, height, settingsConfigured, folderId, tracks, viewState
     }
 }
 
@@ -46,6 +47,7 @@ extension Timeline {
             width: try c.decode(Int.self, forKey: .width),
             height: try c.decode(Int.self, forKey: .height),
             settingsConfigured: (try? c.decode(Bool.self, forKey: .settingsConfigured)) ?? false,
+            folderId: try? c.decode(String.self, forKey: .folderId),
             tracks: try c.decode([Track].self, forKey: .tracks),
             viewState: (try? c.decode(TimelineViewState.self, forKey: .viewState)) ?? TimelineViewState()
         )

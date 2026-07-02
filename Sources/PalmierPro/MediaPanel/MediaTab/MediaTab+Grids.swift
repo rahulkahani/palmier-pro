@@ -5,12 +5,13 @@ import UniformTypeIdentifiers
 
 extension MediaTab {
     struct MediaCell: Identifiable {
-        enum Kind { case folder(MediaFolder), asset(MediaAsset) }
+        enum Kind { case folder(MediaFolder), timeline(Timeline), asset(MediaAsset) }
         let kind: Kind
 
         var id: String {
             switch kind {
             case .folder(let f): return MediaPanelItemKey.folder(f.id)
+            case .timeline(let t): return MediaPanelItemKey.timeline(t.id)
             case .asset(let a): return a.id
             }
         }
@@ -53,6 +54,9 @@ extension MediaTab {
         for folder in subfoldersInCurrentFolder {
             cells.append(MediaCell(kind: .folder(folder)))
         }
+        for timeline in timelinesInCurrentFolder {
+            cells.append(MediaCell(kind: .timeline(timeline)))
+        }
         for asset in assetsInCurrentFolder {
             cells.append(MediaCell(kind: .asset(asset)))
         }
@@ -66,6 +70,7 @@ extension MediaTab {
     func clearSelections() {
         if !editor.selectedMediaAssetIds.isEmpty { editor.selectedMediaAssetIds.removeAll() }
         if !editor.selectedFolderIds.isEmpty { editor.selectedFolderIds.removeAll() }
+        if !editor.selectedTimelineIds.isEmpty { editor.selectedTimelineIds.removeAll() }
     }
 
     func publishOrderedIds(_ ids: [String]) {
@@ -387,8 +392,63 @@ extension MediaTab {
         case .folder(let folder):
             folderTile(folder)
                 .background(assetFrameReader(for: cell.id))
+        case .timeline(let timeline):
+            timelineTile(timeline)
+                .background(assetFrameReader(for: cell.id))
         case .asset(let asset):
             assetCellView(for: asset)
+        }
+    }
+
+    fileprivate func timelineTile(_ timeline: Timeline) -> some View {
+        TimelineTileView(
+            timeline: timeline,
+            posterImage: timelinePoster(timeline),
+            isSelected: editor.selectedTimelineIds.contains(timeline.id),
+            isActive: editor.activeTimelineId == timeline.id,
+            canDelete: editor.timelines.count > 1,
+            isRenaming: Binding(
+                get: { renamingTimelineId == timeline.id },
+                set: { renamingTimelineId = $0 ? timeline.id : nil }
+            ),
+            onTap: { handleTimelineTap(timeline) },
+            onOpen: { editor.activateTimeline(timeline.id) },
+            onCommitRename: { newName in
+                editor.renameTimeline(timeline.id, to: newName)
+                renamingTimelineId = nil
+            },
+            onCancelRename: { renamingTimelineId = nil },
+            onDuplicate: { editor.duplicateTimeline(timeline.id) },
+            onDelete: { editor.deleteTimeline(timeline.id) }
+        )
+        .draggable(MediaTab.timelineDragString(forTimelineId: timeline.id)) {
+            TimelineDragPreview(name: timeline.name)
+        }
+    }
+
+    /// First visual clip's cached asset thumbnail — no dedicated timeline render.
+    fileprivate func timelinePoster(_ timeline: Timeline) -> NSImage? {
+        for track in timeline.tracks where track.type == .video {
+            for clip in track.clips where clip.mediaType == .video || clip.mediaType == .image {
+                if let thumb = editor.mediaAssets.first(where: { $0.id == clip.mediaRef })?.thumbnail {
+                    return thumb
+                }
+            }
+        }
+        return nil
+    }
+
+    fileprivate func handleTimelineTap(_ timeline: Timeline) {
+        if NSEvent.modifierFlags.contains(.shift) {
+            if editor.selectedTimelineIds.contains(timeline.id) {
+                editor.selectedTimelineIds.remove(timeline.id)
+            } else {
+                editor.selectedTimelineIds.insert(timeline.id)
+            }
+        } else {
+            editor.selectedTimelineIds = [timeline.id]
+            editor.selectedMediaAssetIds.removeAll()
+            editor.selectedFolderIds.removeAll()
         }
     }
 
@@ -439,6 +499,7 @@ extension MediaTab {
         } else {
             editor.selectedFolderIds = [folder.id]
             editor.selectedMediaAssetIds.removeAll()
+            editor.selectedTimelineIds.removeAll()
         }
     }
 

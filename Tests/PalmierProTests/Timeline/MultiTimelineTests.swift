@@ -241,6 +241,41 @@ struct MultiTimelineTests {
         #expect(e.activeTimelineId == aId)
     }
 
+    @Test func moveTimelinesToFolderSetsParentAndUndoes() {
+        let e = EditorViewModel()
+        let undo = UndoManager()
+        e.undoManager = undo
+        let folderId = e.createFolder(name: "Cuts")
+        let tid = e.activeTimelineId
+        undo.removeAllActions()
+
+        e.moveTimelinesToFolder(timelineIds: [tid], folderId: folderId)
+        #expect(e.timeline(for: tid)?.folderId == folderId)
+
+        undo.undo()
+        #expect(e.timeline(for: tid)?.folderId == nil)
+    }
+
+    @Test func deleteFolderReparentsContainedTimelinesToRoot() {
+        let e = EditorViewModel()
+        let folderId = e.createFolder(name: "Cuts")
+        let tid = e.activeTimelineId
+        e.moveTimelinesToFolder(timelineIds: [tid], folderId: folderId)
+
+        e.deleteFolders(ids: [folderId])
+
+        #expect(e.timeline(for: tid) != nil)   // never cascade-deleted
+        #expect(e.timeline(for: tid)?.folderId == nil)
+    }
+
+    @Test func timelineFolderIdPersists() throws {
+        var t = Fixtures.timeline()
+        t.folderId = "f1"
+        let file = ProjectFile(timelines: [t], activeTimelineId: t.id, openTimelineIds: [t.id])
+        let decoded = try ProjectFile.decode(JSONEncoder().encode(file))
+        #expect(decoded.timelines[0].folderId == "f1")
+    }
+
     @Test func fpsChangeRescalesEveryTimeline() {
         let e = EditorViewModel()
         e.timeline.tracks = [Fixtures.videoTrack(clips: [Fixtures.clip(start: 30, duration: 30)])]

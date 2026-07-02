@@ -66,6 +66,11 @@ extension EditorViewModel {
         let assetIdsToDelete = assetIds(inFolderIds: allFolderIds)
         let clipIdsToRemove = removeClipsReferencingAssets(assetIdsToDelete)
 
+        // Timelines are never cascade-deleted with their folder; reparent to root.
+        for i in timelines.indices where timelines[i].folderId.map(allFolderIds.contains) == true {
+            timelines[i].folderId = nil
+        }
+
         mediaAssets.removeAll { assetIdsToDelete.contains($0.id) }
         mediaManifest.entries.removeAll { assetIdsToDelete.contains($0.id) }
         mediaManifest.folders.removeAll { allFolderIds.contains($0.id) }
@@ -80,6 +85,24 @@ extension EditorViewModel {
         if !clipIdsToRemove.isEmpty {
             notifyTimelineChanged()
         }
+    }
+
+    func moveTimelinesToFolder(timelineIds: Set<String>, folderId: String?) {
+        guard !timelineIds.isEmpty else { return }
+        var changes: [ParentChange] = []
+        for id in timelineIds {
+            guard let t = timeline(for: id), t.folderId != folderId else { continue }
+            changes.append((id, folderId))
+        }
+        guard !changes.isEmpty else { return }
+        applyParentChanges(
+            changes, actionName: "Move to Folder",
+            get: { vm, id in vm.timeline(for: id)?.folderId },
+            set: { vm, id, value in
+                guard let i = vm.timelines.firstIndex(where: { $0.id == id }) else { return }
+                vm.timelines[i].folderId = value
+            }
+        )
     }
 
     func moveAssetsToFolder(assetIds: Set<String>, folderId: String?) {
