@@ -82,6 +82,7 @@ extension InspectorView {
         if !audios.isEmpty {
             let allOn = audios.allSatisfy(\.hasDenoiseEnabled)
             let baking = audios.contains { editor.denoiseInFlight.contains($0.mediaRef) }
+            let failed = allOn && !baking && audios.contains { editor.denoiseFailed.contains($0.mediaRef) }
             VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
                 propertyRow(label: "Denoise") {
                     Toggle("", isOn: Binding(
@@ -111,6 +112,10 @@ extension InspectorView {
                             .font(.system(size: AppTheme.FontSize.xs))
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
+                } else if failed {
+                    Text("Denoise failed. Playback uses the original audio — adjust Strength to retry.")
+                        .font(.system(size: AppTheme.FontSize.xs))
+                        .foregroundStyle(AppTheme.Status.errorColor)
                 }
             }
         }

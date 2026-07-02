@@ -33,6 +33,10 @@ final class EditorViewModel {
     /// mediaRefs currently being baked by `AudioEnhancer`.
     var denoiseInFlight: Set<String> = []
 
+    /// mediaRefs whose last bake failed; skipped by the automatic rescan so a persistent
+    /// failure can't retry-loop. Cleared when the user changes the clip's denoise settings.
+    var denoiseFailed: Set<String> = []
+
     // MARK: - Panel focus
 
     enum FocusedPanel: String {
@@ -333,6 +337,9 @@ final class EditorViewModel {
 
     func notifyTimelineChanged(refreshVisuals: Bool = true) {
         guard undoManager?.isUndoRegistrationEnabled ?? true else { return }
+        // Undo/redo (and any other restore) can bring back denoise-enabled clips whose
+        // bake never ran or whose strength changed; cheap no-op when nothing is pending.
+        enhancePendingDenoises()
         pendingRebuildTask?.cancel()
         pendingRebuildTask = nil
         if isPlaying {
