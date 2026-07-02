@@ -97,7 +97,6 @@ extension InspectorView {
                             editor.setDenoise(
                                 clipIds: Set(audios.map(\.id)),
                                 enabled: enabled,
-                                amount: enabled ? Clip.defaultDenoiseAmount : nil,
                                 actionName: enabled ? "Enable Denoise" : "Disable Denoise"
                             )
                         }
