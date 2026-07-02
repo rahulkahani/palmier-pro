@@ -45,15 +45,19 @@ enum AudioEnhancer {
     }
 
     static func cachedURL(for sourceURL: URL, mediaRef: String, amount: Double) -> URL? {
+        if percent(amount) == 0 { return sourceURL }
         let url = mixedOutputURL(for: sourceURL, mediaRef: mediaRef, amount: amount)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     // MARK: - Cache paths
 
+    private static func percent(_ amount: Double) -> Int {
+        Int((min(1, max(0, amount)) * 100).rounded())
+    }
+
     private static func mixedOutputURL(for sourceURL: URL, mediaRef: String, amount: Double) -> URL {
-        let pct = Int((min(1, max(0, amount)) * 100).rounded())
-        return cache.directory.appendingPathComponent("\(mediaRef)_\(cacheTag(for: sourceURL))_\(pct)_denoised.caf")
+        cache.directory.appendingPathComponent("\(mediaRef)_\(cacheTag(for: sourceURL))_\(percent(amount))_denoised.caf")
     }
 
     private static func cacheTag(for url: URL) -> String {
