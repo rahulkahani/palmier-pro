@@ -233,6 +233,15 @@ final class ExportService {
         let renderSize = resolution.renderSize(for: timelineCanvas)
         let mediaURLs = resolver.expectedURLMap()
 
+        // CompositionBuilder only ever uses an already-cached denoise bake (so preview never
+        // blocks on the model); export can afford to wait, so bake anything still missing here.
+        for track in timeline.tracks {
+            for clip in track.clips where clip.hasDenoiseEnabled {
+                guard let url = mediaURLs[clip.mediaRef] else { continue }
+                _ = try? await AudioEnhancer.enhancedAudio(for: url, mediaRef: clip.mediaRef, amount: clip.denoiseAmount)
+            }
+        }
+
         let result = try await CompositionBuilder.build(
             timeline: timeline,
             resolveURL: { mediaURLs[$0] },

@@ -30,6 +30,9 @@ final class EditorViewModel {
     var mediaManifest = MediaManifest()
     var generationLog = GenerationLog()
 
+    /// mediaRefs currently being baked by `AudioEnhancer`.
+    var denoiseInFlight: Set<String> = []
+
     // MARK: - Panel focus
 
     enum FocusedPanel: String {

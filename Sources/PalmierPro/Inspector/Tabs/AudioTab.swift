@@ -19,6 +19,8 @@ extension InspectorView {
                         .padding(.trailing, KeyframesMetrics.controlsColumnWidth + AppTheme.Spacing.sm)
                     fadeRow(label: "Fade Out", clips: audios, edge: .right)
                         .padding(.trailing, KeyframesMetrics.controlsColumnWidth + AppTheme.Spacing.sm)
+                    denoiseRow(audios: audios)
+                        .padding(.trailing, KeyframesMetrics.controlsColumnWidth + AppTheme.Spacing.sm)
                     if nonTextVisualClips.isEmpty {
                         speedSection(clips: audios)
                             .padding(.trailing, KeyframesMetrics.controlsColumnWidth + AppTheme.Spacing.sm)
@@ -39,6 +41,7 @@ extension InspectorView {
                     volumeRow(audios: audios)
                     fadeRow(label: "Fade In", clips: audios, edge: .left)
                     fadeRow(label: "Fade Out", clips: audios, edge: .right)
+                    denoiseRow(audios: audios)
                 }
                 if nonTextVisualClips.isEmpty {
                     speedSection(clips: audios)
@@ -72,6 +75,71 @@ extension InspectorView {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func denoiseRow(audios: [Clip]) -> some View {
+        if !audios.isEmpty {
+            let allOn = audios.allSatisfy(\.hasDenoiseEnabled)
+            let baking = audios.contains { editor.denoiseInFlight.contains($0.mediaRef) }
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+                propertyRow(label: "Denoise") {
+                    Toggle("", isOn: Binding(
+                        get: { allOn },
+                        set: { enabled in
+                            editor.setDenoise(
+                                clipIds: Set(audios.map(\.id)),
+                                enabled: enabled,
+                                amount: enabled ? Clip.defaultDenoiseAmount : nil,
+                                actionName: enabled ? "Enable Denoise" : "Disable Denoise"
+                            )
+                        }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                }
+                .help("Removes background noise from this audio using an on-device model.")
+                if allOn {
+                    denoiseStrengthRow(audios: audios)
+                }
+                if baking {
+                    HStack(spacing: AppTheme.Spacing.xs) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Removing background noise…")
+                            .font(.system(size: AppTheme.FontSize.xs))
+                            .foregroundStyle(AppTheme.Text.mutedColor)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func denoiseStrengthRow(audios: [Clip]) -> some View {
+        propertyRow(label: "Strength") {
+            ScrubbableNumberField(
+                value: sharedClipValue(audios) { $0.denoiseAmount * 100 },
+                range: 0...100,
+                format: "%.0f",
+                valueSuffix: "%",
+                dragSensitivity: 0.5,
+                fieldWidth: 56
+                // No onChanged: this only persists (and re-mixes) once on commit, so
+                // dragging/scrubbing doesn't trigger a full preview rebuild per pixel
+                // (that swaps the player item and flashes black). The field still
+                // tracks the live value locally while dragging.
+            ) { percent in
+                editor.setDenoise(
+                    clipIds: Set(audios.map(\.id)),
+                    enabled: true,
+                    amount: percent / 100,
+                    actionName: "Change Denoise Strength"
+                )
+            }
+        }
+        .help("Blends denoised and original audio — lower this if voices sound thin or over-compressed.")
     }
 
     @ViewBuilder
