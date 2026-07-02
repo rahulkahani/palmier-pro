@@ -31,6 +31,23 @@ extension EditorViewModel {
         }
     }
 
+    /// Export can bake denoise caches the preview never got (failed bake, or a composition
+    /// built before the cache landed). Clear stale failure marks and rebuild so playback
+    /// matches the exported file.
+    func syncDenoiseAfterExport() {
+        var hasCached = false
+        for track in timeline.tracks {
+            for clip in track.clips where clip.hasDenoiseEnabled {
+                guard let url = mediaResolver.resolveURL(for: clip.mediaRef),
+                      AudioEnhancer.cachedURL(for: url, mediaRef: clip.mediaRef, amount: clip.denoiseAmount) != nil
+                else { continue }
+                denoiseFailed.remove(clip.mediaRef)
+                hasCached = true
+            }
+        }
+        if hasCached { videoEngine?.rebuild() }
+    }
+
     func enhanceAudioIfNeeded(for clip: Clip) {
         guard clip.hasDenoiseEnabled,
               !denoiseInFlight.contains(clip.mediaRef), !denoiseFailed.contains(clip.mediaRef),
