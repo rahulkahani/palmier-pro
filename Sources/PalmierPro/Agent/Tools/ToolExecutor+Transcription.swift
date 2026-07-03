@@ -226,6 +226,11 @@ extension ToolExecutor {
         var words: [TimelineWord] = []
         for frag in fragments.sorted(by: { $0.clip.startFrame < $1.clip.startFrame }) {
             guard let transcript = transcripts.results[frag.url] else { continue }
+            // A dedicated mic in a multicam group attributes its words to that
+            // speaker with certainty — better than (and a local substitute for)
+            // cloud diarization.
+            let micSpeaker = editor.multicamMembership(of: frag.clip)
+                .flatMap { $0.member.role == .mic ? $0.member.speaker : nil }
             for row in timelineRows(from: transcript, clip: frag.clip, fps: fps) {
                 words.append(TimelineWord(
                     index: words.count,
@@ -236,7 +241,7 @@ extension ToolExecutor {
                     text: row.text,
                     startFrame: row.start,
                     endFrame: row.end,
-                    speaker: row.speaker
+                    speaker: micSpeaker ?? row.speaker
                 ))
             }
         }

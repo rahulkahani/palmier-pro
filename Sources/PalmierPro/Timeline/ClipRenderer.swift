@@ -58,6 +58,7 @@ enum ClipRenderer {
         cache: MediaVisualCache? = nil,
         displayName: String? = nil,
         linkOffset: Int? = nil,
+        speakerBadge: String? = nil,
         fps: Int,
         isMissing: Bool = false,
         isGenerating: Bool = false
@@ -151,6 +152,8 @@ enum ClipRenderer {
 
         if showDetailChrome, let linkOffset, linkOffset != 0 {
             drawOffsetBadge(frames: linkOffset, in: rect, context: context)
+        } else if showDetailChrome, let speakerBadge, !speakerBadge.isEmpty {
+            drawSpeakerBadge(text: speakerBadge, in: rect, context: context)
         }
 
         if showDetailChrome {
@@ -655,6 +658,37 @@ enum ClipRenderer {
         context.saveGState()
         let path = CGPath(roundedRect: badgeRect, cornerWidth: 3, cornerHeight: 3, transform: nil)
         context.setFillColor(offsetBadgeColor.cgColor)
+        context.addPath(path)
+        context.fillPath()
+        str.draw(at: NSPoint(x: badgeRect.minX + padH, y: badgeRect.minY + padV))
+        context.restoreGState()
+    }
+
+    // MARK: - Multicam speaker/angle badge
+
+    private static func drawSpeakerBadge(text: String, in rect: NSRect, context: CGContext) {
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: AppTheme.FontSize.xs, weight: .semibold),
+            .foregroundColor: NSColor.white,
+        ]
+        let str = NSAttributedString(string: text, attributes: attrs)
+        let textSize = str.size()
+        let padH: CGFloat = 4
+        let padV: CGFloat = 1
+        let badgeWidth = textSize.width + padH * 2
+        let badgeHeight = textSize.height + padV * 2
+        let handleW = Trim.handleWidth
+        let badgeRect = NSRect(
+            x: rect.maxX - handleW - badgeWidth - 2,
+            y: rect.minY + 2,
+            width: badgeWidth,
+            height: badgeHeight
+        )
+        guard badgeRect.minX > rect.minX + 6 else { return }
+
+        context.saveGState()
+        let path = CGPath(roundedRect: badgeRect, cornerWidth: 3, cornerHeight: 3, transform: nil)
+        context.setFillColor(AppTheme.Multicam.badgeColor(for: text).withAlphaComponent(AppTheme.Opacity.prominent).cgColor)
         context.addPath(path)
         context.fillPath()
         str.draw(at: NSPoint(x: badgeRect.minX + padH, y: badgeRect.minY + padV))

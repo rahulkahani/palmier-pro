@@ -427,6 +427,7 @@ final class TimelineView: NSView {
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
                                           linkOffset: linkOffsets[clip.id],
+                                          speakerBadge: editor.multicamBadgeLabel(for: clip),
                                           fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating)
                     }
                     continue
@@ -440,6 +441,7 @@ final class TimelineView: NSView {
                                   cache: editor.mediaVisualCache,
                                   displayName: editor.clipDisplayLabel(for: clip),
                                   linkOffset: linkOffsets[clip.id],
+                                  speakerBadge: editor.multicamBadgeLabel(for: clip),
                                   fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating)
             }
         }

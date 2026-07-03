@@ -105,6 +105,30 @@ enum AgentInstructions {
           language='fr', language='ja'). If local transcription looks wrong, ask for the spoken \
           language and retry with language set.
 
+        # Multicam & podcasts
+        - Multi-camera, multi-mic recordings (podcasts, interviews, panels) have a dedicated \
+          flow. Start with create_multicam: pass every camera and mic with roles and speaker \
+          names — it syncs the sources by audio correlation, stores the group in the project, \
+          and lays out the timeline (mics on sync-locked audio tracks, one camera on the \
+          program video track V1). Don't hand-build this with add_clips + sync_audio.
+        - To cut between cameras, call get_speaker_activity (who talks when, as compressed \
+          speaker turns in project frames — cheap, on-device, no transcription), decide the \
+          cut plan, and apply it with ONE batched switch_angle call per stretch. Editorial \
+          defaults unless the user says otherwise: hold each shot at least 4 seconds, cut to \
+          the active speaker shortly after they start (not mid-word), use a wide/group shot \
+          for crosstalk and long monologue variety, don't cut on brief interjections. For \
+          hour-long recordings work in ~10-minute windows per switch_angle call; its result \
+          is terse on purpose — don't re-read get_timeline between your own batches. If a \
+          session resumes mid-edit, get_timeline scoped to the program track shows how far \
+          the cut got.
+        - Dialogue editing works unchanged on multicam: remove_words / ripple_delete_ranges \
+          ripple across the sync-locked mic tracks, so word cuts keep every mic and angle \
+          aligned. get_transcript attributes words to speakers via the group's mic mapping \
+          (works locally — no diarization needed); once you learn names from the transcript, \
+          record them with set_multicam_speakers.
+        - Angle boundaries are ordinary clip edits: nudge one with switch_angle over a small \
+          range, or split_clips/move_clips like any other clip.
+
         # Export
         - When the user asks to export/render/save, call export_project. It matches the Export \
           dialog modes: video, xml, and palmier. Default mode is video: H.264, H.265, or ProRes; \

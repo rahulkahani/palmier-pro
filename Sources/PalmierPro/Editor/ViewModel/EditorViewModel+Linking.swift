@@ -155,6 +155,60 @@ extension EditorViewModel {
         trimClips(edits)
     }
 
+    // MARK: - Roll edit
+
+    /// The clip butted against `clipId` on `edge` (no gap), or nil.
+    func rollNeighbor(of clipId: String, edge: TrimEdge) -> Clip? {
+        guard let loc = findClip(id: clipId) else { return nil }
+        let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
+        let clips = timeline.tracks[loc.trackIndex].clips
+        switch edge {
+        case .left:  return clips.first { $0.id != clipId && $0.endFrame == clip.startFrame }
+        case .right: return clips.first { $0.id != clipId && $0.startFrame == clip.endFrame }
+        }
+    }
+
+    /// Largest achievable roll delta: capped by the growing side's source
+    /// headroom and the shrinking side's minimum duration (1 frame).
+    func clampedRollDelta(clipId: String, edge: TrimEdge, deltaFrames: Int) -> Int {
+        guard deltaFrames != 0,
+              let clip = clipFor(id: clipId),
+              let neighbor = rollNeighbor(of: clipId, edge: edge) else { return 0 }
+        let (left, right) = edge == .right ? (clip, neighbor) : (neighbor, clip)
+
+        func extendRoom(_ c: Clip, tailward: Bool) -> Int {
+            if c.mediaType == .image || c.mediaType == .text { return Int.max }
+            let sourceRoom = tailward ? c.trimEndFrame : c.trimStartFrame
+            return Int(Double(sourceRoom) / max(c.speed, 0.0001))
+        }
+
+        if deltaFrames > 0 {
+            // Boundary moves right: left clip grows into its tail, right clip shrinks.
+            return min(deltaFrames, min(extendRoom(left, tailward: true), right.durationFrames - 1))
+        }
+        // Boundary moves left: right clip grows into its head, left clip shrinks.
+        return max(deltaFrames, -min(extendRoom(right, tailward: false), left.durationFrames - 1))
+    }
+
+    /// Roll edit: move the boundary between `clipId` and its adjacent neighbor
+    /// on `edge` — one side lengthens, the other shortens, nothing else moves.
+    /// deltaFrames > 0 moves the boundary right. One undoable action.
+    func rollEditPoint(clipId: String, edge: TrimEdge, deltaFrames: Int, propagateToLinked: Bool) {
+        let delta = clampedRollDelta(clipId: clipId, edge: edge, deltaFrames: deltaFrames)
+        guard delta != 0, let neighbor = rollNeighbor(of: clipId, edge: edge) else { return }
+        undoManager?.beginUndoGrouping()
+        switch edge {
+        case .left:
+            commitTrim(clipId: neighbor.id, edge: .right, deltaFrames: delta, propagateToLinked: propagateToLinked)
+            commitTrim(clipId: clipId, edge: .left, deltaFrames: delta, propagateToLinked: propagateToLinked)
+        case .right:
+            commitTrim(clipId: clipId, edge: .right, deltaFrames: delta, propagateToLinked: propagateToLinked)
+            commitTrim(clipId: neighbor.id, edge: .left, deltaFrames: delta, propagateToLinked: propagateToLinked)
+        }
+        undoManager?.endUndoGrouping()
+        undoManager?.setActionName("Roll Edit")
+    }
+
     func trimValues(for clip: Clip, edge: TrimEdge, delta: Int) -> (trimStart: Int, trimEnd: Int) {
         let sourceDelta = Int((Double(delta) * clip.speed).rounded())
         // Image/Text clips have no source-material bound, so their trim fields can go negative

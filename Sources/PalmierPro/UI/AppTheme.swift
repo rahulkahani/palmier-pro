@@ -141,6 +141,27 @@ enum AppTheme {
         static var successColor: Color { Color(success) }
     }
 
+    // MARK: - Multicam
+
+    enum Multicam {
+        /// Per-member badge colors, picked stably by label so a speaker keeps
+        /// one color across clips and sessions.
+        static let badgePalette: [NSColor] = [
+            NSColor(red: 0x4F/255.0, green: 0x8F/255.0, blue: 0xE5/255.0, alpha: 1),
+            NSColor(red: 0xB8/255.0, green: 0x6F/255.0, blue: 0xE0/255.0, alpha: 1),
+            NSColor(red: 0x3F/255.0, green: 0xA8/255.0, blue: 0x8A/255.0, alpha: 1),
+            NSColor(red: 0xD9/255.0, green: 0x8A/255.0, blue: 0x3D/255.0, alpha: 1),
+            NSColor(red: 0xC9/255.0, green: 0x5C/255.0, blue: 0x7C/255.0, alpha: 1),
+            NSColor(red: 0x8A/255.0, green: 0x9E/255.0, blue: 0x46/255.0, alpha: 1),
+        ]
+
+        static func badgeColor(for label: String) -> NSColor {
+            var hash: UInt64 = 5381
+            for byte in label.utf8 { hash = hash &* 33 &+ UInt64(byte) }
+            return badgePalette[Int(hash % UInt64(badgePalette.count))]
+        }
+    }
+
     // MARK: - Text
 
     enum Text {

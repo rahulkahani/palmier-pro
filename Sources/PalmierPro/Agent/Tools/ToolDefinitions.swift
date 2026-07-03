@@ -16,6 +16,10 @@ enum ToolName: String, CaseIterable, Sendable {
     case rippleDeleteRanges = "ripple_delete_ranges"
     case removeWords = "remove_words"
     case syncAudio = "sync_audio"
+    case createMulticam = "create_multicam"
+    case getSpeakerActivity = "get_speaker_activity"
+    case switchAngle = "switch_angle"
+    case setMulticamSpeakers = "set_multicam_speakers"
     case undo = "undo"
     case addTexts = "add_texts"
     case updateText = "update_text"
@@ -412,6 +416,91 @@ enum ToolDefinitions {
                     "minConfidence": ["type": "number", "description": "Minimum correlation confidence 0–1 (default 0.5)."],
                 ],
                 required: ["referenceClipId"]
+            )
+        ),
+        AgentTool(
+            name: .createMulticam,
+            description: "Set up a multicam recording session (podcast, interview, panel) in one call: registers cameras and mics as a multicam group, aligns their sync offsets by cross-correlating source audio, and lays out the timeline — each mic full-length on its own sync-locked audio track, one default camera on a new program video track (V1), all positioned so everything lines up. The group persists in the project (visible in get_media as multicamGroups), so switch_angle and get_speaker_activity can derive frame math from it later.\n\nMembers: every camera and mic file of the session. role 'camera' = video asset; role 'mic' = audio asset (or a video used only for its sound). Set speaker on each mic ('Alice') and on any camera framing one person — that mapping drives speaker-aware editing; use set_multicam_speakers to fill it in later once names are known from the transcript.\n\nSync runs automatically against referenceMediaRef (default: the first mic). Pass syncOffsetFrames on a member to pin its offset and skip its correlation (offset = group time at the member's source start, in project frames); pass sync=false to skip correlation entirely. Members that fail to correlate keep offset 0 and are reported in syncFailures — fix with set_clip_properties/move_clips or re-run.\n\nAfter this call the timeline is ready to edit: word cuts (remove_words / ripple_delete_ranges) ripple across the sync-locked mic tracks so everything stays aligned, and switch_angle cuts the program track between cameras.",
+            inputSchema: objectSchema(
+                properties: [
+                    "name": ["type": "string", "description": "Group name (e.g. 'Episode 42'). Defaults to 'Multicam N'."],
+                    "members": [
+                        "type": "array",
+                        "description": "Cameras and mics of the session, at least 2. One bad entry rejects the whole call.",
+                        "items": objectSchema(
+                            properties: [
+                                "mediaRef": ["type": "string", "description": "Asset ID from get_media."],
+                                "role": ["type": "string", "enum": ["camera", "mic"], "description": "camera = a video angle; mic = an audio source used for speaker attribution and the mix."],
+                                "speaker": ["type": "string", "description": "Optional person name. On mics: whose voice this is. On cameras: who the shot frames (omit for wide/group shots)."],
+                                "syncOffsetFrames": ["type": "integer", "description": "Optional. Pin this member's sync offset (group time of its source frame 0, project frames) instead of correlating."],
+                            ],
+                            required: ["mediaRef", "role"]
+                        ),
+                    ],
+                    "referenceMediaRef": ["type": "string", "description": "Optional. Member all others sync against (offset 0). Defaults to the first mic."],
+                    "sync": ["type": "boolean", "description": "Optional, default true. false skips audio correlation (use with explicit syncOffsetFrames)."],
+                    "searchWindowSeconds": ["type": "number", "description": "Optional. Max ± sync offset to search in seconds (default 30). Raise for cameras started long after the mics."],
+                    "minConfidence": ["type": "number", "description": "Optional. Minimum correlation confidence 0–1 (default 0.5)."],
+                    "layout": ["type": "boolean", "description": "Optional, default true. false registers the group without touching the timeline."],
+                    "startFrame": ["type": "integer", "description": "Optional, default 0. Project frame where the earliest member lands."],
+                ],
+                required: ["members"]
+            )
+        ),
+        AgentTool(
+            name: .getSpeakerActivity,
+            description: "Who talks when, compressed into speaker turns — the decision input for multicam cutting. Reads each mic clip's audio energy (voice activity detection, on-device, language-agnostic; no transcription cost), attributes speech to speakers via the multicam group's mic mapping, resolves cross-mic bleed by level comparison, and returns merged segments in project frames. An hour of conversation is typically a few hundred turns, so the whole episode usually fits in one call.\n\nRequires the group's mics to be on the timeline (create_multicam's layout does this). Results reflect the CURRENT timeline — after word cuts the segments are post-edit frames, ready to pass to switch_angle.\n\nControl your own context budget: minTurnFrames drops micro-interjections, bridgeGapFrames merges pauses inside a turn, startFrame/endFrame windows a dense stretch. The response includes angles (the group's cameras and which speaker each frames) so you can plan cuts without re-reading the group.",
+            inputSchema: objectSchema(
+                properties: [
+                    "groupId": ["type": "string", "description": "Multicam group id (from create_multicam or get_media). Optional when the project has exactly one group."],
+                    "startFrame": ["type": "integer", "description": "Optional window start (inclusive, project frames)."],
+                    "endFrame": ["type": "integer", "description": "Optional window end (exclusive)."],
+                    "minTurnFrames": ["type": "integer", "description": "Optional. Segments shorter than this are dropped (default 8). Raise to hide brief interjections."],
+                    "bridgeGapFrames": ["type": "integer", "description": "Optional. Pauses up to this long inside one speaker's turn are merged (default 30, ~1s at 30fps). Raise for fewer, longer turns."],
+                ]
+            )
+        ),
+        AgentTool(
+            name: .switchAngle,
+            description: "Cut the program track between cameras of a multicam group. Each entry says: from startFrame to endFrame, show this camera. The tool splits program clips at the range bounds, then swaps each enclosed clip's source to the target camera with the trim corrected from the group's sync offsets — content time never shifts, so the mics stay in sync by construction. Every cut lands as an ordinary clip: adjust any boundary later with split_clips/move_clips or another switch_angle over a small range.\n\nBatch a whole editing pass into one call (one undo step): read get_speaker_activity, decide the cut plan (typical style: 4–8s minimum shot length, cut to the active speaker shortly after they start, wide shot during crosstalk), and pass every range at once. For hour-long episodes work in ~10-minute windows per call. Ranges may span existing cuts — they're re-split deterministically, and clips already showing the target camera are left alone. The result is terse (counts + range covered); don't re-read get_timeline between your own batches.\n\nRanges that can't switch (camera not recording at that moment, no group clips in range) are reported in skipped without failing the rest.",
+            inputSchema: objectSchema(
+                properties: [
+                    "trackIndex": ["type": "integer", "description": "The program video track (from create_multicam's programTrackIndex, or get_timeline)."],
+                    "switches": [
+                        "type": "array",
+                        "description": "Angle cuts, each {startFrame, endFrame, mediaRef}. Process in timeline order for readability; overlaps apply in order (later entries win where they overlap).",
+                        "items": objectSchema(
+                            properties: [
+                                "startFrame": ["type": "integer", "description": "Range start (inclusive, project frames)."],
+                                "endFrame": ["type": "integer", "description": "Range end (exclusive)."],
+                                "mediaRef": ["type": "string", "description": "Camera asset to show — must be a member of the multicam group."],
+                            ],
+                            required: ["startFrame", "endFrame", "mediaRef"]
+                        ),
+                    ],
+                ],
+                required: ["trackIndex", "switches"]
+            )
+        ),
+        AgentTool(
+            name: .setMulticamSpeakers,
+            description: "Update the speaker ↔ member mapping of a multicam group after creation — e.g. once you've read the transcript and know who's who. Set speaker on mics (whose voice) and on single-person cameras (who the shot frames); pass null to clear. The mapping drives get_speaker_activity labels, get_transcript speaker attribution, and the angle suggestions in get_speaker_activity's angles list.",
+            inputSchema: objectSchema(
+                properties: [
+                    "groupId": ["type": "string", "description": "Multicam group id."],
+                    "speakers": [
+                        "type": "array",
+                        "description": "Member updates. Members not listed keep their current speaker.",
+                        "items": objectSchema(
+                            properties: [
+                                "mediaRef": ["type": "string", "description": "Member asset ID."],
+                                "speaker": ["type": ["string", "null"], "description": "Person name, or null to clear."],
+                            ],
+                            required: ["mediaRef"]
+                        ),
+                    ],
+                ],
+                required: ["groupId", "speakers"]
             )
         ),
         AgentTool(

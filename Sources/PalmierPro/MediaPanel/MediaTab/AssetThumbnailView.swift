@@ -89,10 +89,21 @@ struct AssetThumbnailView: View {
             AIEditMenu(asset: asset)
             Divider()
         }
+        if canCreateMulticam(ids: ids) {
+            Button("New Multicam Group") { editor.createMulticamGroupFromAssets(ids: ids) }
+            Divider()
+        }
         Button("Reveal in Finder") { revealInFinder(ids: ids) }
         Button("Copy Path") { copyPaths(ids: ids) }
         Divider()
         Button("Delete", role: .destructive) { deleteAssets(ids: ids) }
+    }
+
+    private func canCreateMulticam(ids: [String]) -> Bool {
+        let avCount = editor.mediaAssets
+            .filter { ids.contains($0.id) && ($0.type == .video || $0.type == .audio) }
+            .count
+        return avCount >= 2
     }
 
     private var contextTargetIds: [String] {

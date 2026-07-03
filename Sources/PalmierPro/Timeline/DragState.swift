@@ -81,6 +81,9 @@ enum DragState {
         /// When true, trim applies to link-group partners too.
         let propagateToLinked: Bool
         let isRipple: Bool
+        /// Roll edit: the boundary moves — this clip and `rollNeighborId` resize in opposite directions.
+        var isRoll: Bool = false
+        var rollNeighborId: String? = nil
         var deltaFrames: Int = 0
     }
 
