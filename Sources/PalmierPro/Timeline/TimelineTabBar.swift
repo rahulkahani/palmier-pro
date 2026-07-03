@@ -10,6 +10,7 @@ struct TimelineTabBar: View {
 
     var body: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
+            allTimelinesMenu
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: AppTheme.Spacing.md) {
@@ -38,6 +39,34 @@ struct TimelineTabBar: View {
             Spacer(minLength: 0)
         }
         .panelHeaderBar()
+    }
+
+    private var allTimelinesMenu: some View {
+        Menu {
+            ForEach(editor.timelines) { timeline in
+                Button {
+                    editor.activateTimeline(timeline.id)
+                } label: {
+                    if timeline.id == editor.activeTimelineId {
+                        Label(timeline.name, systemImage: "checkmark")
+                    } else {
+                        Text(timeline.name)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.md)
+                .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .padding(.leading, AppTheme.Spacing.xs)
+        .help("All timelines")
     }
 
     private func tabItem(_ timeline: Timeline) -> some View {
@@ -130,3 +159,4 @@ struct TimelineTabBar: View {
         .buttonStyle(.plain)
     }
 }
+
