@@ -26,6 +26,12 @@ struct TimelineTabBar: View {
                         proxy.scrollTo(newId, anchor: .center)
                     }
                 }
+                .onChange(of: editor.timelineTabRenameRequest) { _, id in
+                    guard let id else { return }
+                    editor.timelineTabRenameRequest = nil
+                    renamingTabId = id
+                    proxy.scrollTo(id, anchor: .center)
+                }
             }
             .fixedSize(horizontal: false, vertical: true)
 

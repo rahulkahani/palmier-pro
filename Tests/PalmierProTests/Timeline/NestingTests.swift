@@ -37,6 +37,50 @@ struct NestingTests {
         #expect(e.timeline.tracks.allSatisfy { $0.clips.isEmpty })
     }
 
+    @Test func nestSelectedClipsMovesSelectionIntoNewTimeline() {
+        let e = EditorViewModel()
+        let undo = UndoManager()
+        e.undoManager = undo
+
+        // Two video lanes + audio; selection skips the top-lane clip at 0 and the audio tail.
+        e.timeline.tracks = [
+            Fixtures.videoTrack(clips: [Fixtures.clip(id: "t1", start: 0, duration: 20), Fixtures.clip(id: "t2", start: 40, duration: 20)]),
+            Fixtures.videoTrack(clips: [Fixtures.clip(id: "v1", start: 30, duration: 60)]),
+            Fixtures.audioTrack(clips: [Fixtures.clip(id: "a1", mediaType: .audio, start: 30, duration: 30), Fixtures.clip(id: "a2", mediaType: .audio, start: 100, duration: 10)])
+        ]
+        let before = e.timeline
+        e.selectedClipIds = ["t2", "v1", "a1"]
+        undo.removeAllActions()
+
+        e.nestSelectedClips()
+
+        // Child holds the moved clips rebased to the span start (30), lane order preserved.
+        let child = e.timelines.first { $0.name == "Nest 1" }
+        #expect(child != nil)
+        #expect(child?.tracks.map(\.type) == [.video, .video, .audio])
+        #expect(child?.tracks[0].clips.map(\.startFrame) == [10])
+        #expect(child?.tracks[1].clips.map(\.startFrame) == [0])
+        #expect(child?.tracks[2].clips.map(\.startFrame) == [0])
+        #expect(child?.totalFrames == 60)
+
+        // Parent: v1's emptied lane pruned; linked carriers span [30, 90); "t1"/"a2" survive.
+        let videoLane = e.timeline.tracks.first { $0.type == .video }!
+        let audioLane = e.timeline.tracks.first { $0.type == .audio }!
+        #expect(e.timeline.tracks.count == 2)
+        let v = videoLane.clips.first { $0.sourceClipType == .sequence }
+        let a = audioLane.clips.first { $0.sourceClipType == .sequence }
+        #expect(v?.startFrame == 30 && v?.durationFrames == 60)
+        #expect(a?.mediaType == .audio)
+        #expect(v?.linkGroupId != nil && v?.linkGroupId == a?.linkGroupId)
+        #expect(videoLane.clips.contains { $0.id == "t1" })
+        #expect(audioLane.clips.contains { $0.id == "a2" })
+        #expect(e.selectedClipIds == Set([v?.id, a?.id].compactMap { $0 }))
+
+        undo.undo()
+        #expect(e.timeline == before)
+        #expect(e.timelines.count == 1)
+    }
+
     @Test func nestRejectsCyclesAndEmptyTimelines() {
         let e = EditorViewModel()
 

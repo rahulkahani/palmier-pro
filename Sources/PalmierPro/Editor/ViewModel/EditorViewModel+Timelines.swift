@@ -251,38 +251,93 @@ extension EditorViewModel {
                 videoTarget = .newTrackAt(0)
             }
             let videoIdx = materializeTrackIndex(target: videoTarget, type: .video)
-            clearRegion(trackIndex: videoIdx, start: startFrame, end: startFrame + duration)
-
             let hasAudio = child.tracks.contains { $0.type == .audio && !$0.clips.isEmpty }
-            let linkGroupId: String? = hasAudio ? UUID().uuidString : nil
+            let audioIdx = hasAudio ? resolveOrCreateAudioTrack(startFrame: startFrame, duration: duration) : nil
+            insertNestCarriers(for: child, start: startFrame, duration: duration, videoIdx: videoIdx, audioIdx: audioIdx)
+        }
+        return true
+    }
 
+    func nestSelectedClips() {
+        let ids = selectedClipIds
+        var lanes: [(index: Int, type: ClipType, clips: [Clip])] = []
+        for (i, track) in timeline.tracks.enumerated() {
+            let picked = track.clips.filter { ids.contains($0.id) }
+            if !picked.isEmpty { lanes.append((i, track.type, picked)) }
+        }
+        guard !lanes.isEmpty else { return }
+
+        let all = lanes.flatMap(\.clips)
+        let start = all.map(\.startFrame).min()!
+        let duration = all.map(\.endFrame).max()! - start
+
+        var child = Timeline(name: uniqueName({ "Nest \($0)" }, startingAt: 1))
+        child.fps = timeline.fps
+        child.width = timeline.width
+        child.height = timeline.height
+        child.settingsConfigured = timeline.settingsConfigured
+        child.tracks = lanes.map { lane in
+            Track(type: lane.type, clips: lane.clips.map { clip in
+                var c = clip
+                c.startFrame -= start
+                return c
+            })
+        }
+
+        timelines.append(child)
+        registerRemoveUndo(for: child.id, actionName: "Nest Clips")
+        selectedClipIds = []
+        withTimelineSwap(actionName: "Nest Clips") {
+            for i in timeline.tracks.indices {
+                timeline.tracks[i].clips.removeAll { ids.contains($0.id) }
+            }
+            let carriers = insertNestCarriers(
+                for: child, start: start, duration: duration,
+                videoIdx: lanes.first { $0.type != .audio }?.index,
+                audioIdx: lanes.first { $0.type == .audio }?.index
+            )
+            pruneEmptyTracks()
+            selectedClipIds = carriers
+        }
+        openTimelineIds.append(child.id)
+        timelineTabRenameRequest = child.id
+    }
+
+    /// Inserts linked `.sequence` carrier clips on already-resolved tracks, clearing their span.
+    @discardableResult
+    private func insertNestCarriers(for child: Timeline, start: Int, duration: Int, videoIdx: Int?, audioIdx: Int?) -> Set<String> {
+        let linkGroupId = videoIdx != nil && audioIdx != nil ? UUID().uuidString : nil
+        var carrierIds: Set<String> = []
+        if let vi = videoIdx {
+            clearRegion(trackIndex: vi, start: start, end: start + duration, prune: false)
             var clip = Clip(
-                mediaRef: childId,
+                mediaRef: child.id,
                 mediaType: .sequence,
                 sourceClipType: .sequence,
-                startFrame: startFrame,
+                startFrame: start,
                 durationFrames: duration,
                 transform: fitTransform(sourceWidth: child.width, sourceHeight: child.height)
             )
             clip.linkGroupId = linkGroupId
-            timeline.tracks[videoIdx].clips.append(clip)
-            sortClips(trackIndex: videoIdx)
-
-            if let linkGroupId {
-                let audioIdx = resolveOrCreateAudioTrack(startFrame: startFrame, duration: duration)
-                var audioClip = Clip(
-                    mediaRef: childId,
-                    mediaType: .audio,
-                    sourceClipType: .sequence,
-                    startFrame: startFrame,
-                    durationFrames: duration
-                )
-                audioClip.linkGroupId = linkGroupId
-                timeline.tracks[audioIdx].clips.append(audioClip)
-                sortClips(trackIndex: audioIdx)
-            }
+            timeline.tracks[vi].clips.append(clip)
+            sortClips(trackIndex: vi)
+            carrierIds.insert(clip.id)
         }
-        return true
+        if let ai = audioIdx {
+            clearRegion(trackIndex: ai, start: start, end: start + duration, prune: false)
+            var clip = Clip(
+                mediaRef: child.id,
+                mediaType: .audio,
+                sourceClipType: .sequence,
+                startFrame: start,
+                durationFrames: duration
+            )
+            clip.linkGroupId = linkGroupId
+            timeline.tracks[ai].clips.append(clip)
+            sortClips(trackIndex: ai)
+            carrierIds.insert(clip.id)
+        }
+        return carrierIds
     }
 
     // MARK: - Naming

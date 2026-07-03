@@ -896,6 +896,9 @@ final class TimelineView: NSView {
 
         // Nest
         var nestItems: [NSMenuItem] = []
+        let nestClipsItem = NSMenuItem(title: "Create Nested Timeline", action: #selector(performNestClips(_:)), keyEquivalent: "")
+        nestClipsItem.target = self
+        nestItems.append(nestClipsItem)
         if clip.sourceClipType == .sequence {
             let openItem = NSMenuItem(title: "Open Timeline", action: #selector(performOpenNestedTimeline(_:)), keyEquivalent: "")
             openItem.target = self
@@ -1044,6 +1047,10 @@ final class TimelineView: NSView {
         guard let item = sender as? NSMenuItem,
               let clipId = item.representedObject as? String else { return }
         editor.beginMediaSwap(clipId: clipId)
+    }
+
+    @objc private func performNestClips(_ sender: Any?) {
+        editor.nestSelectedClips()
     }
 
     @objc private func performOpenNestedTimeline(_ sender: Any?) {
