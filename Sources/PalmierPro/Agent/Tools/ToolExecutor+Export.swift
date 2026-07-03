@@ -109,16 +109,24 @@ extension ToolExecutor {
             }
         }
         do {
-            try await XMLExporter.export(timeline: editor.timeline, resolver: editor.mediaResolver, outputURL: outputURL)
+            let timelinesById = Dictionary(uniqueKeysWithValues: editor.timelines.map { ($0.id, $0) })
+            try await XMLExporter.export(
+                timeline: editor.timeline, resolver: editor.mediaResolver,
+                resolveTimeline: { timelinesById[$0] }, outputURL: outputURL
+            )
         } catch {
             throw ToolError("export_project: XML export failed: \(error.localizedDescription)")
         }
         guard FileManager.default.fileExists(atPath: outputURL.path) else {
             throw ToolError("export_project: XML export failed")
         }
-        let nestCount = editor.timeline.tracks.flatMap(\.clips).count { $0.sourceClipType == .sequence }
-        let warnings: [String] = nestCount > 0
-            ? ["\(nestCount) nested timeline clip(s) were not exported — XML nesting support is not available yet."]
+        // Nests export as nested sequences; only unresolvable/empty children drop.
+        let droppedNests = editor.timeline.tracks.flatMap(\.clips).count {
+            $0.sourceClipType == .sequence && $0.mediaType != .audio
+                && (editor.timeline(for: $0.mediaRef)?.totalFrames ?? 0) == 0
+        }
+        let warnings: [String] = droppedNests > 0
+            ? ["\(droppedNests) nested timeline clip(s) were skipped — their timelines are empty or missing."]
             : []
         return try jsonResult([
             "status": "exported",
@@ -142,16 +150,24 @@ extension ToolExecutor {
             }
         }
         do {
-            try await FCPXMLExporter.export(timeline: editor.timeline, resolver: editor.mediaResolver, outputURL: outputURL)
+            let timelinesById = Dictionary(uniqueKeysWithValues: editor.timelines.map { ($0.id, $0) })
+            try await FCPXMLExporter.export(
+                timeline: editor.timeline, resolver: editor.mediaResolver,
+                resolveTimeline: { timelinesById[$0] }, outputURL: outputURL
+            )
         } catch {
             throw ToolError("export_project: FCPXML export failed: \(error.localizedDescription)")
         }
         guard FileManager.default.fileExists(atPath: outputURL.path) else {
             throw ToolError("export_project: FCPXML export failed")
         }
-        let nestCount = editor.timeline.tracks.flatMap(\.clips).count { $0.sourceClipType == .sequence }
-        let warnings: [String] = nestCount > 0
-            ? ["\(nestCount) nested timeline clip(s) were not exported — XML nesting support is not available yet."]
+        // Nests export as compound clips; only unresolvable/empty children drop.
+        let droppedNests = editor.timeline.tracks.flatMap(\.clips).count {
+            $0.sourceClipType == .sequence && ($0.mediaType != .audio)
+                && (editor.timeline(for: $0.mediaRef)?.totalFrames ?? 0) == 0
+        }
+        let warnings: [String] = droppedNests > 0
+            ? ["\(droppedNests) nested timeline clip(s) were skipped — their timelines are empty or missing."]
             : []
         return try jsonResult([
             "status": "exported",
