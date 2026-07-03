@@ -462,20 +462,37 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .switchAngle,
-            description: "Cut the program track between cameras of a multicam group. Each entry says: from startFrame to endFrame, show this camera. The tool splits program clips at the range bounds, then swaps each enclosed clip's source to the target camera with the trim corrected from the group's sync offsets — content time never shifts, so the mics stay in sync by construction. Every cut lands as an ordinary clip: adjust any boundary later with split_clips/move_clips or another switch_angle over a small range.\n\nBatch a whole editing pass into one call (one undo step): read get_speaker_activity, decide the cut plan (typical style: 4–8s minimum shot length, cut to the active speaker shortly after they start, wide shot during crosstalk), and pass every range at once. For hour-long episodes work in ~10-minute windows per call. Ranges may span existing cuts — they're re-split deterministically, and clips already showing the target camera are left alone. The result is terse (counts + range covered); don't re-read get_timeline between your own batches.\n\nRanges that can't switch (camera not recording at that moment, no group clips in range) are reported in skipped without failing the rest.",
+            description: "Cut the program track between cameras of a multicam group. Each entry says: from startFrame to endFrame, show this camera (mediaRef) — or show SEVERAL cameras at once (layout + slots: side-by-side for a two-way exchange, grid_2x2 for a four-person panel, PiP for a reaction). The tool splits program clips at the range bounds, swaps each enclosed clip's source with the trim corrected from the group's sync offsets, and for layouts places the extra angles on auto-managed overlay tracks directly above the program track with the same offset-corrected trims and the layout's transforms — content time never shifts, so the mics stay in sync by construction. A later single-mediaRef (full-frame) entry over the same frames ends a layout: it clears this call's overlay layers in its range and resets the program clip to full-frame. Every cut lands as an ordinary clip: adjust any boundary later with split_clips/move_clips or another switch_angle over a small range; re-crop a layout's framing afterwards with apply_layout clipIds mode.\n\nBatch a whole editing pass into one call (one undo step): read get_speaker_activity, decide the cut plan (typical style: 4–8s minimum shot length, cut to the active speaker shortly after they start, a layout or wide shot during crosstalk), and pass every range at once in timeline order. For hour-long episodes work in ~10-minute windows per call. Ranges may span existing cuts — they're re-split deterministically. The result is terse (counts + range covered); don't re-read get_timeline between your own batches, but note that layout entries insert overlay tracks above the program track, which shifts track indices.\n\nRanges that can't switch (a camera not recording at that moment, no group clips in range) are reported in skipped without failing the rest.",
             inputSchema: objectSchema(
                 properties: [
                     "trackIndex": ["type": "integer", "description": "The program video track (from create_multicam's programTrackIndex, or get_timeline)."],
                     "switches": [
                         "type": "array",
-                        "description": "Angle cuts, each {startFrame, endFrame, mediaRef}. Process in timeline order for readability; overlaps apply in order (later entries win where they overlap).",
+                        "description": "Angle cuts in timeline order. Each entry has startFrame/endFrame plus EITHER mediaRef (one full-frame camera) OR layout+slots (several cameras composed on screen). Overlaps apply in order (later entries win where they overlap).",
                         "items": objectSchema(
                             properties: [
                                 "startFrame": ["type": "integer", "description": "Range start (inclusive, project frames)."],
                                 "endFrame": ["type": "integer", "description": "Range end (exclusive)."],
-                                "mediaRef": ["type": "string", "description": "Camera asset to show — must be a member of the multicam group."],
+                                "mediaRef": ["type": "string", "description": "Single-angle form: camera asset to show full-frame — must be a member of the multicam group. Mutually exclusive with layout."],
+                                "layout": [
+                                    "type": "string",
+                                    "enum": VideoLayout.allCases.filter { $0 != .full }.map(\.rawValue),
+                                    "description": "Multi-angle form: compose several cameras for this range. Slot names as in apply_layout (side_by_side: left/right; grid_2x2: top_left/top_right/bottom_left/bottom_right; pip_*: main/inset; main_sidebar: main/sidebar; three_up: left/center/right).",
+                                ],
+                                "slots": [
+                                    "type": "array",
+                                    "description": "Required with layout: one {slot, mediaRef} per slot of the layout, every slot filled, all cameras from the same multicam group.",
+                                    "items": objectSchema(
+                                        properties: [
+                                            "slot": ["type": "string", "description": "Slot name of the chosen layout."],
+                                            "mediaRef": ["type": "string", "description": "Camera asset for this slot."],
+                                        ],
+                                        required: ["slot", "mediaRef"]
+                                    ),
+                                ],
+                                "fit": ["type": "string", "enum": ["fill", "fit"], "description": "Layout form only. 'fill' (default) cover-crops each camera to its slot; 'fit' letterboxes."],
                             ],
-                            required: ["startFrame", "endFrame", "mediaRef"]
+                            required: ["startFrame", "endFrame"]
                         ),
                     ],
                 ],

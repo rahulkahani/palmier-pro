@@ -229,6 +229,145 @@ struct SwitchAngleTests {
     }
 }
 
+@Suite("ToolExecutor — switch_angle layouts")
+@MainActor
+struct SwitchAngleLayoutTests {
+
+    /// Program track with one 300-frame clip of camera A; camera B offset +60.
+    private func harness() -> ToolHarness {
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [
+                Fixtures.clip(id: "program-clip-01", mediaRef: "cam-a-00000000", start: 0, duration: 300),
+            ]),
+        ]))
+        h.addAsset(id: "cam-a-00000000", type: .video, duration: 10)
+        h.addAsset(id: "cam-b-00000000", type: .video, duration: 10)
+        h.editor.mediaManifest.multicamGroups = [MulticamGroup(
+            id: "group-00000000", name: "Test",
+            members: [
+                MulticamGroup.Member(mediaRef: "cam-a-00000000", role: .camera, syncOffsetFrames: 0, speaker: "Alice"),
+                MulticamGroup.Member(mediaRef: "cam-b-00000000", role: .camera, syncOffsetFrames: 60, speaker: "Bob"),
+            ]
+        )]
+        return h
+    }
+
+    @Test func sideBySidePlacesOverlayWithOffsetCorrectedTrim() async throws {
+        let h = harness()
+        let result = try await h.runOK("switch_angle", args: [
+            "trackIndex": 0,
+            "switches": [[
+                "startFrame": 100, "endFrame": 200,
+                "layout": "side_by_side",
+                "slots": [
+                    ["slot": "left", "mediaRef": "cam-a-00000000"],
+                    ["slot": "right", "mediaRef": "cam-b-00000000"],
+                ],
+            ]],
+        ]) as? [String: Any]
+
+        #expect(result?["overlayClips"] as? Int == 1)
+        #expect(result?["createdOverlayTracks"] as? Int == 1)
+
+        // Overlay track inserted above the program track.
+        #expect(h.editor.timeline.tracks.count == 2)
+        let overlay = h.editor.timeline.tracks[0]
+        let program = h.editor.timeline.tracks[1]
+
+        // Program's middle segment keeps camera A but is framed into the left half.
+        let mid = try #require(program.clips.first { $0.startFrame == 100 })
+        #expect(mid.mediaRef == "cam-a-00000000")
+        #expect(abs(mid.transform.width - 0.5) < 0.001)
+        #expect(abs(mid.transform.centerX - 0.25) < 0.001)
+
+        // Overlay shows camera B over the same span with the offset-corrected trim.
+        let over = try #require(overlay.clips.first)
+        #expect(over.mediaRef == "cam-b-00000000")
+        #expect(over.startFrame == 100 && over.endFrame == 200)
+        #expect(over.trimStartFrame == 40)
+        #expect(abs(over.transform.centerX - 0.75) < 0.001)
+    }
+
+    @Test func fullFrameEntryEndsLayoutInSameCall() async throws {
+        let h = harness()
+        _ = try await h.runOK("switch_angle", args: [
+            "trackIndex": 0,
+            "switches": [
+                [
+                    "startFrame": 100, "endFrame": 200,
+                    "layout": "side_by_side",
+                    "slots": [
+                        ["slot": "left", "mediaRef": "cam-a-00000000"],
+                        ["slot": "right", "mediaRef": "cam-b-00000000"],
+                    ],
+                ],
+                ["startFrame": 100, "endFrame": 200, "mediaRef": "cam-a-00000000"],
+            ],
+        ])
+
+        // Overlay cleared, program restored to full-frame camera A.
+        let overlay = h.editor.timeline.tracks[0]
+        #expect(overlay.clips.isEmpty)
+        let program = h.editor.timeline.tracks[1]
+        let mid = try #require(program.clips.first { $0.startFrame == 100 })
+        #expect(mid.mediaRef == "cam-a-00000000")
+        #expect(abs(mid.transform.width - 1.0) < 0.001)
+    }
+
+    @Test func layoutRejectsMissingSlots() async {
+        let h = harness()
+        let result = await h.runRaw("switch_angle", args: [
+            "trackIndex": 0,
+            "switches": [[
+                "startFrame": 100, "endFrame": 200,
+                "layout": "side_by_side",
+                "slots": [["slot": "left", "mediaRef": "cam-a-00000000"]],
+            ]],
+        ])
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("every slot filled"))
+    }
+
+    @Test func layoutSkipsWhenAnAngleWasNotRecording() async {
+        let h = harness()
+        // Frames 0..50 → camera B source −60..−10.
+        let result = await h.runRaw("switch_angle", args: [
+            "trackIndex": 0,
+            "switches": [[
+                "startFrame": 0, "endFrame": 50,
+                "layout": "side_by_side",
+                "slots": [
+                    ["slot": "left", "mediaRef": "cam-a-00000000"],
+                    ["slot": "right", "mediaRef": "cam-b-00000000"],
+                ],
+            ]],
+        ])
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("wasn't recording"))
+        // Nothing placed, nothing split.
+        #expect(h.editor.timeline.tracks.count == 1)
+        #expect(h.editor.timeline.tracks[0].clips.count == 1)
+    }
+
+    @Test func rejectsMixingMediaRefAndLayout() async {
+        let h = harness()
+        let result = await h.runRaw("switch_angle", args: [
+            "trackIndex": 0,
+            "switches": [[
+                "startFrame": 100, "endFrame": 200,
+                "mediaRef": "cam-b-00000000",
+                "layout": "side_by_side",
+                "slots": [
+                    ["slot": "left", "mediaRef": "cam-a-00000000"],
+                    ["slot": "right", "mediaRef": "cam-b-00000000"],
+                ],
+            ]],
+        ])
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("exactly one of"))
+    }
+}
+
 @Suite("ToolExecutor — set_multicam_speakers")
 @MainActor
 struct SetMulticamSpeakersTests {

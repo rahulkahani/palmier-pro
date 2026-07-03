@@ -42,8 +42,17 @@ fileprivate struct SwitchAngleInput: DecodableToolArgs {
     struct Switch: DecodableToolArgs {
         let startFrame: Int
         let endFrame: Int
+        let mediaRef: String?
+        let layout: String?
+        let slots: [Slot]?
+        let fit: String?
+        static let allowedKeys: Set<String> = ["startFrame", "endFrame", "mediaRef", "layout", "slots", "fit"]
+    }
+
+    struct Slot: DecodableToolArgs {
+        let slot: String
         let mediaRef: String
-        static let allowedKeys: Set<String> = ["startFrame", "endFrame", "mediaRef"]
+        static let allowedKeys: Set<String> = ["slot", "mediaRef"]
     }
 }
 
@@ -251,27 +260,84 @@ extension ToolExecutor {
         guard editor.timeline.tracks[input.trackIndex].type != .audio else {
             throw ToolError("trackIndex \(input.trackIndex) is an audio track — switch_angle operates on the program video track.")
         }
-        var switches: [(range: FrameRange, toMediaRef: String)] = []
+        var requests: [EditorViewModel.AngleSwitchRequest] = []
         for (idx, s) in input.switches.enumerated() {
+            let path = "switches[\(idx)]"
             guard s.endFrame > s.startFrame, s.startFrame >= 0 else {
-                throw ToolError("switches[\(idx)]: endFrame must be greater than startFrame (got [\(s.startFrame), \(s.endFrame)))")
+                throw ToolError("\(path): endFrame must be greater than startFrame (got [\(s.startFrame), \(s.endFrame)))")
             }
-            let asset = try asset(s.mediaRef, editor: editor)
-            guard editor.multicamGroup(containing: asset.id) != nil else {
-                throw ToolError("switches[\(idx)]: \(asset.id) is not a member of any multicam group. Create one with create_multicam first.")
+            guard (s.mediaRef != nil) != (s.layout != nil) else {
+                throw ToolError("\(path): provide exactly one of 'mediaRef' (single full-frame angle) or 'layout'+'slots' (multi-angle layout).")
             }
-            switches.append((FrameRange(start: s.startFrame, end: s.endFrame), asset.id))
+            let fit = try s.fit.map {
+                guard let f = LayoutFit(rawValue: $0) else { throw ToolError("\(path): invalid fit '\($0)'. Valid: fill, fit") }
+                return f
+            } ?? LayoutFit.fill
+
+            var layout = VideoLayout.full
+            var assignments: [(slotId: String, mediaRef: String)] = []
+            if let single = s.mediaRef {
+                let asset = try asset(single, editor: editor)
+                assignments = [("main", asset.id)]
+            } else {
+                guard let l = VideoLayout(rawValue: s.layout!) else {
+                    throw ToolError("\(path): unknown layout '\(s.layout!)'. Valid: \(VideoLayout.allCases.map(\.rawValue).joined(separator: ", "))")
+                }
+                guard l != .full else {
+                    throw ToolError("\(path): layout 'full' is the single-angle case — pass 'mediaRef' instead.")
+                }
+                layout = l
+                guard let slots = s.slots, !slots.isEmpty else {
+                    throw ToolError("\(path): 'layout' requires a 'slots' array of {slot, mediaRef}.")
+                }
+                let slotIds = l.slots.map(\.id)
+                var seen = Set<String>()
+                for entry in slots {
+                    guard slotIds.contains(entry.slot) else {
+                        throw ToolError("\(path): '\(entry.slot)' is not a slot of layout '\(l.rawValue)'. Slots: \(slotIds.joined(separator: ", "))")
+                    }
+                    guard seen.insert(entry.slot).inserted else {
+                        throw ToolError("\(path): duplicate slot '\(entry.slot)'")
+                    }
+                    let asset = try asset(entry.mediaRef, editor: editor)
+                    assignments.append((entry.slot, asset.id))
+                }
+                let missing = Set(slotIds).subtracting(seen)
+                guard missing.isEmpty else {
+                    throw ToolError("\(path): layout '\(l.rawValue)' needs every slot filled. Missing: \(missing.sorted().joined(separator: ", "))")
+                }
+                // Program track shows the layout's first slot; keep declaration order stable.
+                assignments.sort { a, b in
+                    (slotIds.firstIndex(of: a.slotId) ?? 0) < (slotIds.firstIndex(of: b.slotId) ?? 0)
+                }
+            }
+            for (_, ref) in assignments {
+                guard editor.multicamGroup(containing: ref) != nil else {
+                    throw ToolError("\(path): \(ref) is not a member of any multicam group. Create one with create_multicam first.")
+                }
+            }
+            requests.append(EditorViewModel.AngleSwitchRequest(
+                range: FrameRange(start: s.startFrame, end: s.endFrame),
+                layout: layout, fit: fit, assignments: assignments
+            ))
         }
 
         let outcome = withUndoGroup(editor, actionName: "Switch Angle (Agent)") {
-            editor.switchAngle(trackIndex: input.trackIndex, switches: switches)
+            editor.switchAngle(trackIndex: input.trackIndex, requests: requests)
         }
 
         var payload: [String: Any] = [
             "switched": outcome.switchedClipIds.count,
             "splits": outcome.splitCount,
         ]
-        if let minStart = switches.map(\.range.start).min(), let maxEnd = switches.map(\.range.end).max() {
+        if !outcome.placedOverlayClipIds.isEmpty {
+            payload["overlayClips"] = outcome.placedOverlayClipIds.count
+        }
+        if outcome.createdOverlayTracks > 0 {
+            payload["createdOverlayTracks"] = outcome.createdOverlayTracks
+            payload["note"] = "Overlay tracks were inserted above the program track — track indices shifted; the program track is now at a higher index."
+        }
+        if let minStart = requests.map(\.range.start).min(), let maxEnd = requests.map(\.range.end).max() {
             payload["rangeCovered"] = [minStart, maxEnd]
         }
         if !outcome.skipped.isEmpty {
@@ -280,7 +346,8 @@ extension ToolExecutor {
             }
         }
         guard let json = Self.jsonString(payload) else { throw ToolError("Failed to encode result") }
-        if outcome.switchedClipIds.isEmpty && outcome.splitCount == 0 && !outcome.skipped.isEmpty {
+        if outcome.switchedClipIds.isEmpty && outcome.placedOverlayClipIds.isEmpty
+            && outcome.splitCount == 0 && !outcome.skipped.isEmpty {
             return .error(json)
         }
         return .ok(json)

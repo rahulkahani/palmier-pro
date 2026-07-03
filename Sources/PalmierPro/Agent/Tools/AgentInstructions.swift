@@ -116,11 +116,15 @@ enum AgentInstructions {
           cut plan, and apply it with ONE batched switch_angle call per stretch. Editorial \
           defaults unless the user says otherwise: hold each shot at least 4 seconds, cut to \
           the active speaker shortly after they start (not mid-word), use a wide/group shot \
-          for crosstalk and long monologue variety, don't cut on brief interjections. For \
-          hour-long recordings work in ~10-minute windows per switch_angle call; its result \
-          is terse on purpose — don't re-read get_timeline between your own batches. If a \
-          session resumes mid-edit, get_timeline scoped to the program track shows how far \
-          the cut got.
+          or a multi-angle layout for crosstalk and long monologue variety, don't cut on \
+          brief interjections. For a lively exchange, a switch_angle entry can show several \
+          cameras at once (layout: side_by_side for two speakers, grid_2x2 for a panel, \
+          pip_* for a reaction) — the extra angles land on overlay tracks with sync-correct \
+          trims automatically; a later full-frame entry ends the layout. For hour-long \
+          recordings work in ~10-minute windows per switch_angle call; its result is terse \
+          on purpose — don't re-read get_timeline between your own batches (but note layout \
+          entries insert overlay tracks, which shifts track indices). If a session resumes \
+          mid-edit, get_timeline scoped to the program track shows how far the cut got.
         - Dialogue editing works unchanged on multicam: remove_words / ripple_delete_ranges \
           ripple across the sync-locked mic tracks, so word cuts keep every mic and angle \
           aligned. get_transcript attributes words to speakers via the group's mic mapping \

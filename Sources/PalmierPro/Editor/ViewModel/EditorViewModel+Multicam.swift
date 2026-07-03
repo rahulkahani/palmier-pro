@@ -190,26 +190,42 @@ extension EditorViewModel {
 
     // MARK: - Angle switching
 
+    struct AngleSwitchRequest: Sendable {
+        let range: FrameRange
+        /// `.full` = plain single-angle switch on the program track.
+        let layout: VideoLayout
+        let fit: LayoutFit
+        /// Slot-ordered assignments; [0] drives the program track, the rest
+        /// become overlay layers on auto-managed tracks above it.
+        let assignments: [(slotId: String, mediaRef: String)]
+    }
+
     struct AngleSwitchOutcome: Sendable {
         var switchedClipIds: [String] = []
+        var placedOverlayClipIds: [String] = []
+        var createdOverlayTracks: Int = 0
         var splitCount: Int = 0
         var skipped: [(range: FrameRange, message: String)] = []
     }
 
     /// Swap the program-track clips inside each range to another camera of the
-    /// same multicam group. Content time never shifts: the new clip's trim is
-    /// derived from the group's sync offsets, so audio stays aligned by construction.
-    func switchAngle(
-        trackIndex: Int,
-        switches: [(range: FrameRange, toMediaRef: String)]
-    ) -> AngleSwitchOutcome {
+    /// same multicam group — optionally as a multi-angle layout (side-by-side,
+    /// grid, PiP). Content time never shifts: every trim is derived from the
+    /// group's sync offsets, so audio stays aligned by construction. Layout
+    /// entries place the extra angles on overlay tracks directly above the
+    /// program track; `.full` entries clear those overlays in their range.
+    func switchAngle(trackIndex: Int, requests: [AngleSwitchRequest]) -> AngleSwitchOutcome {
         var outcome = AngleSwitchOutcome()
         guard timeline.tracks.indices.contains(trackIndex) else {
-            outcome.skipped = switches.map { ($0.range, "Track index out of range.") }
+            outcome.skipped = requests.map { ($0.range, "Track index out of range.") }
             return outcome
         }
         let assetsById = Dictionary(mediaAssets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let trackId = timeline.tracks[trackIndex].id
+        let programTrackId = timeline.tracks[trackIndex].id
+        // Overlay ordinal (1st extra angle, 2nd, …) → track id, reused across
+        // this call's entries so a whole cut plan shares the same layer tracks.
+        var overlayTrackIds: [Int: String] = [:]
+        var placedIds: [String] = []
 
         undoManager?.beginUndoGrouping()
         defer {
@@ -217,46 +233,57 @@ extension EditorViewModel {
             undoManager?.setActionName("Switch Angle")
         }
 
-        func toSourceLen(_ ref: String) -> Int {
+        func sourceLen(_ ref: String) -> Int {
             assetsById[ref].map { secondsToFrame(seconds: $0.duration, fps: timeline.fps) } ?? 0
         }
 
-        for (range, toRef) in switches {
-            guard let ti = timeline.tracks.firstIndex(where: { $0.id == trackId }) else { break }
-            guard let group = multicamGroup(containing: toRef),
-                  let toMember = group.member(for: toRef) else {
+        for req in requests {
+            let range = req.range
+            guard let programRef = req.assignments.first?.mediaRef else {
+                outcome.skipped.append((range, "No angle assignments.")); continue
+            }
+            guard let pi = timeline.tracks.firstIndex(where: { $0.id == programTrackId }) else { break }
+            guard let group = multicamGroup(containing: programRef),
+                  let programMember = group.member(for: programRef) else {
                 outcome.skipped.append((range, "Target media is not in a multicam group.")); continue
             }
+            guard req.assignments.allSatisfy({ group.member(for: $0.mediaRef) != nil }) else {
+                outcome.skipped.append((range, "All layout angles must belong to the same multicam group.")); continue
+            }
 
-            // Pre-validate against every group clip overlapping the range, so a
-            // range that can't switch leaves no stray splits behind.
-            let overlapping = timeline.tracks[ti].clips.filter { clip in
+            // Pre-validate every assignment against every program clip
+            // overlapping the range, so a range that can't switch leaves no
+            // stray splits behind.
+            let overlapping = timeline.tracks[pi].clips.filter { clip in
                 clip.startFrame < range.end && clip.endFrame > range.start
                     && multicamMembership(of: clip)?.group.id == group.id
             }
-            let candidates = overlapping.filter { $0.mediaRef != toRef }
             guard !overlapping.isEmpty else {
                 outcome.skipped.append((range, "No multicam clips of this group inside the range.")); continue
             }
-            guard !candidates.isEmpty else { continue }  // already showing the target angle
 
             var failure: String?
-            let sourceLen = toSourceLen(toRef)
-            for clip in candidates {
+            for clip in overlapping {
                 guard let fromMember = group.member(for: clip.mediaRef) else { continue }
                 let overlapStart = max(range.start, clip.startFrame)
                 let overlapEnd = min(range.end, clip.endFrame)
                 let speed = max(clip.speed, 0.0001)
-                let sourceAtOverlapStart = clip.trimStartFrame
+                let sourceAtStart = clip.trimStartFrame
                     + Int((Double(overlapStart - clip.startFrame) * speed).rounded())
-                let converted = MulticamGroup.convertedTrimStart(sourceAtOverlapStart, from: fromMember, to: toMember)
-                if converted < 0 {
-                    failure = "\(toRef) wasn't recording yet at frame \(overlapStart)."; break
-                }
+                let groupTimeAtStart = fromMember.syncOffsetFrames + sourceAtStart
                 let consumed = Int((Double(overlapEnd - overlapStart) * speed).rounded())
-                if sourceLen > 0, converted + consumed > sourceLen {
-                    failure = "\(toRef) ends before frame \(overlapEnd)."; break
+                for (_, ref) in req.assignments {
+                    guard let m = group.member(for: ref) else { continue }
+                    let trim = groupTimeAtStart - m.syncOffsetFrames
+                    if trim < 0 {
+                        failure = "\(ref) wasn't recording yet at frame \(overlapStart)."; break
+                    }
+                    let len = sourceLen(ref)
+                    if len > 0, trim + consumed > len {
+                        failure = "\(ref) ends before frame \(overlapEnd)."; break
+                    }
                 }
+                if failure != nil { break }
             }
             if let failure {
                 outcome.skipped.append((range, failure)); continue
@@ -265,39 +292,104 @@ extension EditorViewModel {
             // Insert boundaries so only the requested span switches.
             var points: [(trackIndex: Int, atFrame: Int)] = []
             for edge in [range.start, range.end] {
-                if timeline.tracks[ti].clips.contains(where: { edge > $0.startFrame && edge < $0.endFrame }) {
-                    points.append((ti, edge))
+                if timeline.tracks[pi].clips.contains(where: { edge > $0.startFrame && edge < $0.endFrame }) {
+                    points.append((pi, edge))
                 }
             }
             if !points.isEmpty {
                 outcome.splitCount += splitClips(at: points).count
             }
 
-            // Rewrite every group-member clip now fully inside the range.
-            var targets: [(id: String, newTrimStart: Int, newTrimEnd: Int)] = []
-            for clip in timeline.tracks[ti].clips
-            where clip.startFrame >= range.start && clip.endFrame <= range.end {
-                guard let (clipGroup, fromMember) = multicamMembership(of: clip), clipGroup.id == group.id else { continue }
-                if clip.mediaRef == toRef { continue }
-                let newTrimStart = MulticamGroup.convertedTrimStart(clip.trimStartFrame, from: fromMember, to: toMember)
-                guard newTrimStart >= 0 else { continue }  // pre-validated; defensive
-                let consumed = clip.sourceFramesConsumed
-                let newTrimEnd = sourceLen > 0 ? max(0, sourceLen - newTrimStart - consumed) : 0
-                targets.append((clip.id, newTrimStart, newTrimEnd))
+            // Program segments now fully inside the range, with each segment's
+            // group time captured before any rewrite. Segments may be
+            // discontinuous in group time (word cuts), so overlays mirror them
+            // one-to-one instead of spanning the whole range.
+            let segments: [(id: String, start: Int, end: Int, groupTimeAtStart: Int)] =
+                timeline.tracks[pi].clips.compactMap { clip in
+                    guard clip.startFrame >= range.start, clip.endFrame <= range.end,
+                          let (clipGroup, fromMember) = multicamMembership(of: clip),
+                          clipGroup.id == group.id else { return nil }
+                    return (clip.id, clip.startFrame, clip.endFrame,
+                            fromMember.syncOffsetFrames + clip.trimStartFrame)
+                }
+
+            // Program track: swap the source and own the framing (slot 0's
+            // region for layouts, full-frame fit otherwise).
+            let slot0 = req.layout.slots.first { $0.id == req.assignments[0].slotId }
+            let programLen = sourceLen(programRef)
+            for seg in segments {
+                mutateClips(ids: [seg.id], actionName: "Switch Angle") { [self] clip in
+                    if clip.mediaRef != programRef {
+                        let trim = seg.groupTimeAtStart - programMember.syncOffsetFrames
+                        clip.mediaRef = programRef
+                        clip.trimStartFrame = trim
+                        clip.trimEndFrame = programLen > 0
+                            ? max(0, programLen - trim - clip.sourceFramesConsumed) : 0
+                    }
+                    if req.layout == .full {
+                        clip.transform = fitTransform(for: clip)
+                        clip.crop = Crop()
+                    } else if let slot0 {
+                        let p = layoutPlacement(for: clip, in: slot0.rect, fit: req.fit)
+                        clip.transform = p.transform
+                        clip.crop = p.crop
+                    }
+                }
+                outcome.switchedClipIds.append(seg.id)
             }
 
-            let fit = assetsById[toRef].map { fitTransform(for: $0) }
-            for target in targets {
-                mutateClips(ids: [target.id], actionName: "Switch Angle") { clip in
-                    clip.mediaRef = toRef
-                    clip.trimStartFrame = target.newTrimStart
-                    clip.trimEndFrame = target.newTrimEnd
-                    if let fit { clip.transform = fit }
+            // Overlay layers for the remaining slots.
+            for (ordinal, assignment) in req.assignments.enumerated().dropFirst() where req.layout != .full {
+                guard let slot = req.layout.slots.first(where: { $0.id == assignment.slotId }),
+                      let m = group.member(for: assignment.mediaRef),
+                      let asset = assetsById[assignment.mediaRef] else { continue }
+                let overlayTrackId: String
+                if let existing = overlayTrackIds[ordinal] {
+                    overlayTrackId = existing
+                } else {
+                    guard let programIdx = timeline.tracks.firstIndex(where: { $0.id == programTrackId }) else { continue }
+                    let idx = insertTrack(at: programIdx, type: .video)
+                    overlayTrackId = timeline.tracks[idx].id
+                    overlayTrackIds[ordinal] = overlayTrackId
+                    outcome.createdOverlayTracks += 1
                 }
-                outcome.switchedClipIds.append(target.id)
+                guard let oi = timeline.tracks.firstIndex(where: { $0.id == overlayTrackId }) else { continue }
+                clearRegion(trackIndex: oi, start: range.start, end: range.end, prune: false)
+                for seg in segments {
+                    guard let currentOi = timeline.tracks.firstIndex(where: { $0.id == overlayTrackId }) else { continue }
+                    let trim = seg.groupTimeAtStart - m.syncOffsetFrames
+                    let ids = placeClip(
+                        asset: asset, trackIndex: currentOi,
+                        startFrame: seg.start, durationFrames: seg.end - seg.start,
+                        addLinkedAudio: false, trimStartFrame: trim
+                    )
+                    mutateClips(ids: Set(ids), actionName: "Switch Angle") { [self] clip in
+                        let p = layoutPlacement(for: clip, in: slot.rect, fit: req.fit)
+                        clip.transform = p.transform
+                        clip.crop = p.crop
+                    }
+                    placedIds.append(contentsOf: ids)
+                    outcome.placedOverlayClipIds.append(contentsOf: ids)
+                }
+            }
+
+            // A full-frame section ends any layout: clear this call's overlay
+            // layers inside the range.
+            if req.layout == .full {
+                for tid in overlayTrackIds.values {
+                    guard let oi = timeline.tracks.firstIndex(where: { $0.id == tid }) else { continue }
+                    clearRegion(trackIndex: oi, start: range.start, end: range.end, prune: false)
+                }
             }
         }
-        if !outcome.switchedClipIds.isEmpty || outcome.splitCount > 0 {
+
+        if !placedIds.isEmpty {
+            let ids = Set(placedIds)
+            undoManager?.registerUndo(withTarget: self) { vm in
+                vm.removeClips(ids: ids)
+            }
+        }
+        if !outcome.switchedClipIds.isEmpty || outcome.splitCount > 0 || !placedIds.isEmpty {
             notifyTimelineChanged()
         }
         return outcome
